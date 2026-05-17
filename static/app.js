@@ -381,7 +381,13 @@ function upsertPaperSummary(paper) {
     figure_count: paper.figure_count ?? paper.figures?.length ?? 0,
     citation_count: paper.citation_count ?? paper.citations?.length ?? 0,
   };
-  state.papers = [summary, ...state.papers.filter((item) => item.id !== paper.id)];
+  const existingIndex = state.papers.findIndex((item) => item.id === paper.id);
+  if (existingIndex === -1) {
+    state.papers = [summary, ...state.papers];
+    return;
+  }
+
+  state.papers = state.papers.map((item, index) => (index === existingIndex ? summary : item));
 }
 
 async function selectPaper(paperId) {
