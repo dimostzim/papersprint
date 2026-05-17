@@ -174,6 +174,23 @@ def test_extract_citations_keeps_unresolved_author_year_inline_markers():
     assert citations[0]["contexts"][0]["marker"] == "Feurer et al., 2015"
 
 
+def test_extract_citations_keeps_many_author_year_contexts():
+    body = " ".join(
+        f"Result {index} follows prior work (Hejret et al. 2023)."
+        for index in range(12)
+    )
+    extracted = extracted_from_pages(
+        body,
+        "References\nHejret V et al. Analysis of chimeric reads. Sci Rep 2023;13:22895.",
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "Hejret et al. 2023"
+    assert citations[0]["context_count"] == 12
+    assert len(citations[0]["contexts"]) == 12
+
+
 def test_ground_citation_rects_handles_author_year_markers(tmp_path):
     pdf_path = tmp_path / "paper.pdf"
     doc = fitz.open()

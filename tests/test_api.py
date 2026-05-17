@@ -151,6 +151,83 @@ def test_upload_uses_cached_completed_analysis(tmp_path, monkeypatch):
     assert (papers_dir / f"{digest[:12]}-paper.pdf").exists()
 
 
+def test_upload_refreshes_stale_cached_citations(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes()
+    digest = main.file_digest(data)
+    (cache_papers_dir / f"{digest}.pdf").write_bytes(data)
+    (cache_records_dir / f"{digest}.json").write_text(
+        json.dumps(
+            {
+                "id": "old-id",
+                "filename": "old.pdf",
+                "stored_pdf": "old.pdf",
+                "digest": digest,
+                "analysis_version": main.ANALYSIS_VERSION,
+                "title": "Cached analysis",
+                "overview": "Already analyzed.",
+                "key_takeaways": [],
+                "read_this_first": [],
+                "glossary": [],
+                "highlights": [],
+                "figures": [],
+                "figure_warnings": [],
+                "figure_provider_used": "unknown",
+                "citations": [{"label": "old citation"}],
+                "questions": [],
+                "provider_used": "codex",
+                "warnings": [],
+                "page_sizes": [],
+                "sentences": [],
+                "full_text_chars": 42,
+                "analysis_status": "complete",
+                "analysis_error": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_extract_pdf(pdf_path):
+        return {"pdf_path": pdf_path}
+
+    def fake_extract_citations(extracted):
+        return [{"label": "new citation", "contexts": []}]
+
+    def fake_ground_citation_rects(pdf_path, citations):
+        return citations
+
+    monkeypatch.setattr(main, "extract_pdf", fake_extract_pdf)
+    monkeypatch.setattr(main, "extract_citations", fake_extract_citations)
+    monkeypatch.setattr(main, "ground_citation_rects", fake_ground_citation_rects)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/upload",
+        files={"file": ("paper.pdf", data, "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    paper = main.PAPERS[digest[:12]]
+    assert paper["citations"] == [{"label": "new citation", "contexts": []}]
+    assert paper["citation_version"] == main.CITATION_VERSION
+    refreshed_record = json.loads((cache_records_dir / f"{digest}.json").read_text(encoding="utf-8"))
+    assert refreshed_record["citations"] == [{"label": "new citation", "contexts": []}]
+    assert refreshed_record["citation_version"] == main.CITATION_VERSION
+
+
 def test_cache_paper_persists_figure_records_and_images(tmp_path, monkeypatch):
     papers_dir = tmp_path / "papers"
     figures_dir = tmp_path / "figures"

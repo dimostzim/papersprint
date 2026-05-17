@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from starlette.requests import Request
 
 from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_status
-from .citations import extract_citations, ground_citation_rects
+from .citations import CITATION_VERSION, extract_citations, ground_citation_rects
 from .figures import analyze_figures, figure_directory
 from .paper_processing import extract_pdf, file_digest, find_exact_rects, public_page_sizes, slugify, sort_highlights
 from .web_search import search_web
@@ -178,9 +178,19 @@ def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) 
             "stored_pdf": stored_pdf,
         }
     )
-    shutil.copyfile(source_pdf, PAPERS_DIR / stored_pdf)
+    pdf_path = PAPERS_DIR / stored_pdf
+    shutil.copyfile(source_pdf, pdf_path)
     restore_cached_figures(digest, paper_id, paper)
+    if paper.get("citation_version") != CITATION_VERSION:
+        refresh_paper_citations(paper, pdf_path)
+        cache_paper(paper, pdf_path)
     return paper
+
+
+def refresh_paper_citations(paper: dict[str, Any], pdf_path: Path) -> None:
+    extracted = extract_pdf(pdf_path)
+    paper["citations"] = ground_citation_rects(pdf_path, extract_citations(extracted))
+    paper["citation_version"] = CITATION_VERSION
 
 
 def cached_paper_from_record(record_path: Path) -> dict[str, Any] | None:
@@ -375,6 +385,7 @@ def build_paper_record(
         "figure_warnings": [],
         "figure_provider_used": "unknown",
         "citations": citations,
+        "citation_version": CITATION_VERSION,
         "questions": analysis.get("questions", []),
         "provider_used": analysis.get("provider_used", "unknown"),
         "warnings": analysis.get("warnings", []),
@@ -416,6 +427,7 @@ def build_uploaded_paper_record(
         "figure_warnings": [],
         "figure_provider_used": "unknown",
         "citations": citations,
+        "citation_version": CITATION_VERSION,
         "questions": [],
         "provider_used": "not analyzed",
         "warnings": [],
@@ -455,7 +467,6 @@ def finish_paper_analysis(
     paper["figures"] = existing.get("figures", [])
     paper["figure_warnings"] = existing.get("figure_warnings", [])
     paper["figure_provider_used"] = existing.get("figure_provider_used", "unknown")
-    paper["citations"] = existing.get("citations") or paper.get("citations", [])
     write_paper(paper)
     cache_paper(paper, pdf_path)
 
