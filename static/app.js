@@ -225,6 +225,19 @@ function startChatPanelResize(event) {
   window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
+function resetPaperViewport() {
+  window.scrollTo(0, 0);
+  if (els.readerPanel) {
+    els.readerPanel.scrollTop = 0;
+  }
+  if (els.pdfViewer) {
+    els.pdfViewer.scrollTop = 0;
+  }
+  if (els.chatMessages) {
+    els.chatMessages.scrollTop = 0;
+  }
+}
+
 async function requestJson(url, options = {}) {
   const response = await fetch(url, options);
   const text = await response.text();
@@ -415,6 +428,7 @@ function prependPaperSummaries(papers) {
 }
 
 async function selectPaper(paperId) {
+  resetPaperViewport();
   showReaderLoading();
   const paper = await requestJson(`/api/papers/${paperId}`);
   setSelectedPaper(paper);
