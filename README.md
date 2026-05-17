@@ -1,6 +1,6 @@
 # PaperSprint
 
-PaperSprint is a local-first PDF paper reader for fast scientific triage. It loads papers in the browser, adds AI-guided reading support, and keeps a paper-aware chat beside the PDF.
+PaperSprint is a local-first PDF paper reader for fast paper reading. It loads papers in the browser, adds AI-guided reading support, and keeps a paper-aware chat beside the PDF.
 
 ## Features
 
