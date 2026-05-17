@@ -1,6 +1,6 @@
 # PaperSprint
 
-PaperSprint is a local-first PDF paper reader for fast paper reading. It loads papers in the browser, adds AI-guided reading support, and keeps a paper-aware chat beside the PDF.
+PaperSprint is a local AI PDF paper reader. It loads papers in the browser, adds AI-guided reading support, and keeps a paper-aware chat beside the PDF.
 
 ## Features
 
@@ -33,5 +33,6 @@ After loading a paper, click `Figures` to open the figures workspace. PaperSprin
 
 - Current-session PDFs live under `data/session`.
 - Cached analyzed records and PDFs live under `data/cache`.
+- The refresh button reloads papers and analysis results from `data/cache` into the current session.
 - Deleting a paper removes it from the visible library and cache.
 - Clearing `data/cache` forces papers to be parsed and analyzed again.
