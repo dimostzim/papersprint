@@ -21,6 +21,10 @@ const DEFAULT_HIGHLIGHT_COLORS = {
   important: "#b6bec3",
 };
 
+const PDF_ZOOM_MIN = 0.6;
+const PDF_ZOOM_MAX = 2.4;
+const PDF_ZOOM_STEP = 0.1;
+
 const state = {
   papers: [],
   selectedPaper: null,
@@ -37,6 +41,7 @@ const state = {
   activeHighlightIndex: null,
   pendingCitationContext: null,
   activeHighlightFacet: "all",
+  pdfZoom: 1,
 };
 
 const els = {
@@ -54,6 +59,10 @@ const els = {
   readerPanel: document.querySelector(".reader-panel"),
   readerEmpty: document.getElementById("reader-empty"),
   pdfViewer: document.getElementById("pdf-viewer"),
+  pdfZoomControls: document.getElementById("pdf-zoom-controls"),
+  pdfZoomOutButton: document.getElementById("pdf-zoom-out-button"),
+  pdfZoomInButton: document.getElementById("pdf-zoom-in-button"),
+  pdfZoomLabel: document.getElementById("pdf-zoom-label"),
   highlightCount: document.getElementById("highlight-count"),
   highlightFilters: document.getElementById("highlight-filters"),
   highlightList: document.getElementById("highlight-list"),
@@ -237,6 +246,7 @@ function resetPaperViewport() {
   window.scrollTo(0, 0);
   if (els.readerPanel) {
     els.readerPanel.scrollTop = 0;
+    els.readerPanel.scrollLeft = 0;
   }
   if (els.pdfViewer) {
     els.pdfViewer.scrollTop = 0;
@@ -244,6 +254,59 @@ function resetPaperViewport() {
   if (els.chatMessages) {
     els.chatMessages.scrollTop = 0;
   }
+}
+
+function clampPdfZoom(value) {
+  const rounded = Math.round(Number(value) * 10) / 10;
+  return Math.min(PDF_ZOOM_MAX, Math.max(PDF_ZOOM_MIN, rounded || 1));
+}
+
+function pdfScrollAnchor() {
+  const scroller = els.readerPanel;
+  if (!scroller) {
+    return null;
+  }
+  return {
+    leftRatio: (scroller.scrollLeft + scroller.clientWidth / 2) / Math.max(1, scroller.scrollWidth),
+    topRatio: (scroller.scrollTop + scroller.clientHeight / 2) / Math.max(1, scroller.scrollHeight),
+  };
+}
+
+function restorePdfScrollAnchor(anchor) {
+  const scroller = els.readerPanel;
+  if (!scroller || !anchor) {
+    return;
+  }
+  scroller.scrollLeft = Math.max(0, anchor.leftRatio * scroller.scrollWidth - scroller.clientWidth / 2);
+  scroller.scrollTop = Math.max(0, anchor.topRatio * scroller.scrollHeight - scroller.clientHeight / 2);
+}
+
+function syncPdfZoomControls() {
+  const hasPaper = Boolean(state.selectedPaper);
+  els.pdfZoomControls?.classList.toggle("hidden", !hasPaper);
+  if (els.pdfZoomLabel) {
+    els.pdfZoomLabel.textContent = `${Math.round(state.pdfZoom * 100)}%`;
+  }
+  if (els.pdfZoomOutButton) {
+    els.pdfZoomOutButton.disabled = !hasPaper || state.pdfZoom <= PDF_ZOOM_MIN;
+  }
+  if (els.pdfZoomInButton) {
+    els.pdfZoomInButton.disabled = !hasPaper || state.pdfZoom >= PDF_ZOOM_MAX;
+  }
+}
+
+async function setPdfZoom(nextZoom) {
+  if (!state.selectedPaper) {
+    return;
+  }
+  const zoom = clampPdfZoom(nextZoom);
+  if (zoom === state.pdfZoom) {
+    return;
+  }
+  state.pdfZoom = zoom;
+  syncPdfZoomControls();
+  await renderPdfPreservingScroll(state.selectedPaper);
+  syncPdfZoomControls();
 }
 
 async function requestJson(url, options = {}) {
@@ -505,6 +568,7 @@ function clearSelectedPaper() {
   if (els.paperOverview) {
     els.paperOverview.textContent = "";
   }
+  syncPdfZoomControls();
   if (els.highlightCount) {
     els.highlightCount.textContent = "0";
   }
@@ -516,6 +580,7 @@ function clearSelectedPaper() {
 
 function syncPaperActions() {
   const isAnalyzing = state.selectedPaper?.analysis_status === "analyzing";
+  syncPdfZoomControls();
   setLoadingButton(els.analyzeButton, Boolean(isAnalyzing), isAnalyzing ? "Analyzing" : "Analyze");
   if (els.analyzeButton) {
     els.analyzeButton.disabled = Boolean(isAnalyzing);
@@ -913,7 +978,7 @@ async function renderPdf(paper) {
     const page = await pdfDoc.getPage(pageNumber);
     const baseViewport = page.getViewport({ scale: 1 });
     const maxWidth = Math.min(940, Math.max(520, (els.pdfViewer?.clientWidth || 940) - 48));
-    const scale = maxWidth / baseViewport.width;
+    const scale = (maxWidth / baseViewport.width) * state.pdfZoom;
     const viewport = page.getViewport({ scale });
 
     const wrapper = document.createElement("div");
@@ -967,11 +1032,9 @@ async function renderTextLayer(page, textLayer, viewport, pageNumber) {
 }
 
 async function renderPdfPreservingScroll(paper) {
-  const scrollTop = els.readerPanel?.scrollTop || 0;
+  const anchor = pdfScrollAnchor();
   await renderPdf(paper);
-  if (els.readerPanel) {
-    els.readerPanel.scrollTop = scrollTop;
-  }
+  restorePdfScrollAnchor(anchor);
 }
 
 function renderPageHighlights(overlay, highlights, pageSize, viewport) {
@@ -2022,6 +2085,14 @@ els.refreshButton?.addEventListener("click", () => {
 
 els.figuresButton?.addEventListener("click", () => {
   openFiguresPage();
+});
+
+els.pdfZoomOutButton?.addEventListener("click", () => {
+  setPdfZoom(state.pdfZoom - PDF_ZOOM_STEP).catch((error) => showToast(error.message || String(error)));
+});
+
+els.pdfZoomInButton?.addEventListener("click", () => {
+  setPdfZoom(state.pdfZoom + PDF_ZOOM_STEP).catch((error) => showToast(error.message || String(error)));
 });
 
 els.chatForm?.addEventListener("submit", (event) => {

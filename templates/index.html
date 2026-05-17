@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=41" />
+    <link rel="stylesheet" href="/static/styles.css?v=42" />
   </head>
   <body class="reader-body">
     <header class="topbar">
@@ -70,6 +70,11 @@
       </aside>
 
       <section class="reader-panel">
+        <div id="pdf-zoom-controls" class="pdf-controls hidden" role="toolbar" aria-label="PDF zoom">
+          <button id="pdf-zoom-out-button" class="icon-button" title="Zoom out" type="button" aria-label="Zoom out">-</button>
+          <span id="pdf-zoom-label" class="pdf-zoom-label">100%</span>
+          <button id="pdf-zoom-in-button" class="icon-button" title="Zoom in" type="button" aria-label="Zoom in">+</button>
+        </div>
         <div id="reader-empty" class="empty-state">
           <strong>No paper selected</strong>
           <span>Choose a PDF to load it.</span>
@@ -150,6 +155,6 @@
     <div id="citation-popover" class="citation-popover hidden"></div>
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/app.js?v=33"></script>
+    <script type="module" src="/static/app.js?v=34"></script>
   </body>
 </html>
