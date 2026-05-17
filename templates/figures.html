@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Figures - PaperSprint</title>
-    <link rel="stylesheet" href="/static/styles.css?v=21" />
+    <link rel="stylesheet" href="/static/styles.css?v=23" />
   </head>
   <body class="figures-body" data-paper-id="{{ paper_id }}">
     <header class="topbar">
@@ -29,20 +29,36 @@
     </header>
 
     <main class="figures-main">
-      <section class="figures-heading">
-        <div>
-          <span id="figures-status-pill" class="provider-pill">Waiting</span>
-          <h1 id="figures-title">Figures</h1>
-        </div>
-        <p id="figures-status">Loading paper.</p>
+      <section class="figures-content">
+        <section class="figures-heading">
+          <div>
+            <span id="figures-status-pill" class="provider-pill">Waiting</span>
+            <h1 id="figures-title">Figures</h1>
+          </div>
+          <p id="figures-status">Loading paper.</p>
+        </section>
+
+        <section id="figure-warnings" class="hidden"></section>
+        <section id="figures-list" class="figure-grid"></section>
       </section>
 
-      <section id="figure-warnings" class="hidden"></section>
-      <section id="figures-list" class="figure-grid"></section>
+      <aside class="figures-chat-panel">
+        <section class="chat-panel">
+          <div class="chat-header">
+            <h2>Chat</h2>
+          </div>
+          <div id="figure-chat-focus" class="figure-chat-focus hidden"></div>
+          <div id="figure-chat-messages" class="chat-messages"></div>
+          <form id="figure-chat-form" class="chat-form">
+            <textarea id="figure-chat-input" rows="1" placeholder="Ask about these figures"></textarea>
+            <button type="submit">Send</button>
+          </form>
+        </section>
+      </aside>
     </main>
 
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/figures.js?v=14"></script>
+    <script type="module" src="/static/figures.js?v=15"></script>
   </body>
 </html>

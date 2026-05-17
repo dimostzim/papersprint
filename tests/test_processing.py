@@ -301,6 +301,31 @@ def test_build_chat_prompt_includes_citation_focus():
     assert "p. 4: CiteSee highlights familiar citations [15]." in prompt
 
 
+def test_build_chat_prompt_includes_figure_focus():
+    prompt = build_chat_prompt(
+        {"title": "Useful paper", "overview": "The paper studies semantic readers.", "key_takeaways": []},
+        [{"role": "user", "content": "What does this figure show?"}],
+        [],
+        [],
+        None,
+        [
+            {
+                "label": "Figure 2",
+                "type": "plot",
+                "page_number": 6,
+                "caption": "Model comparison across benchmarks.",
+                "explanation": "The plot compares error across methods.",
+                "why_it_matters": "It supports the main evaluation claim.",
+            }
+        ],
+    )
+
+    assert "Figure focus:" in prompt
+    assert "Figure 1: Figure 2" in prompt
+    assert "Page: 6" in prompt
+    assert "The plot compares error across methods." in prompt
+
+
 def test_select_relevant_excerpts_by_question_terms():
     spans = [
         {"text": "The method uses semantic graph features.", "page_number": 2},

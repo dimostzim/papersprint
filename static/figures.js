@@ -5,6 +5,9 @@ const state = {
   warnings: [],
   providerUsed: "unknown",
   running: false,
+  chatRunning: false,
+  chatMessages: [],
+  selectedFigures: [],
 };
 
 const els = {
@@ -15,6 +18,10 @@ const els = {
   warnings: document.getElementById("figure-warnings"),
   list: document.getElementById("figures-list"),
   reanalyzeButton: document.getElementById("reanalyze-figures-button"),
+  chatFocus: document.getElementById("figure-chat-focus"),
+  chatMessages: document.getElementById("figure-chat-messages"),
+  chatForm: document.getElementById("figure-chat-form"),
+  chatInput: document.getElementById("figure-chat-input"),
   toast: document.getElementById("toast"),
 };
 
@@ -100,6 +107,20 @@ function syncButton() {
   setLoadingButton(els.reanalyzeButton, state.running, label);
 }
 
+function resizeChatInput() {
+  if (!els.chatInput) {
+    return;
+  }
+  const style = window.getComputedStyle(els.chatInput);
+  const lineHeight = Number.parseFloat(style.lineHeight) || 18;
+  const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+  const verticalBorder = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+  const maxHeight = lineHeight * 5 + verticalPadding + verticalBorder;
+  els.chatInput.style.height = "auto";
+  els.chatInput.style.height = `${Math.min(els.chatInput.scrollHeight + verticalBorder, maxHeight)}px`;
+  els.chatInput.style.overflowY = els.chatInput.scrollHeight + verticalBorder > maxHeight ? "auto" : "hidden";
+}
+
 function renderWarnings() {
   if (!els.warnings) {
     return;
@@ -114,6 +135,75 @@ function renderWarnings() {
     els.warnings,
     `<div class="figure-warnings">${state.warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>`,
   );
+}
+
+function figureTitle(figure) {
+  return figure.label || figure.title || "Visual";
+}
+
+function isFigureSelected(figureId) {
+  return state.selectedFigures.some((figure) => figure.id === figureId);
+}
+
+function syncSelectedFigures() {
+  state.selectedFigures = state.selectedFigures
+    .map((figure) => state.figures.find((item) => item.id === figure.id))
+    .filter(Boolean);
+}
+
+function addFigureToChat(figureId) {
+  const figure = state.figures.find((item) => item.id === figureId);
+  if (!figure || isFigureSelected(figureId)) {
+    return;
+  }
+  state.selectedFigures.push(figure);
+  renderFigureFocus();
+  syncFigureButtons();
+  els.chatInput?.focus();
+  showToast("Figure added to chat");
+}
+
+function removeFigureFromChat(figureId) {
+  state.selectedFigures = state.selectedFigures.filter((figure) => figure.id !== figureId);
+  renderFigureFocus();
+  syncFigureButtons();
+}
+
+function renderFigureFocus() {
+  if (!els.chatFocus) {
+    return;
+  }
+  if (!state.selectedFigures.length) {
+    els.chatFocus.classList.add("hidden");
+    setHtml(els.chatFocus, "");
+    return;
+  }
+  els.chatFocus.classList.remove("hidden");
+  setHtml(
+    els.chatFocus,
+    state.selectedFigures
+      .map(
+        (figure) => `
+          <span class="figure-focus-chip">
+            <span>${escapeHtml(figureTitle(figure))}</span>
+            <button data-remove-figure="${escapeHtml(figure.id)}" type="button" aria-label="Remove figure">x</button>
+          </span>
+        `,
+      )
+      .join(""),
+  );
+
+  els.chatFocus.querySelectorAll("[data-remove-figure]").forEach((button) => {
+    button.addEventListener("click", () => removeFigureFromChat(button.dataset.removeFigure || ""));
+  });
+}
+
+function syncFigureButtons() {
+  els.list?.querySelectorAll("[data-add-figure]").forEach((button) => {
+    const isAdded = isFigureSelected(button.dataset.addFigure || "");
+    button.classList.toggle("is-added", isAdded);
+    button.textContent = isAdded ? "Added" : "Add to chat";
+  });
 }
 
 function renderFigures() {
@@ -135,9 +225,14 @@ function renderFigures() {
             <div class="figure-copy">
               <div class="figure-card-heading">
                 <span class="label label-important">${escapeHtml(figure.type || "visual")}</span>
-                <span class="figure-page">p. ${Number(figure.page_number) || "?"}</span>
+                <div class="figure-card-actions">
+                  <span class="figure-page">p. ${Number(figure.page_number) || "?"}</span>
+                  <button class="figure-add-button ${isFigureSelected(figure.id) ? "is-added" : ""}" data-add-figure="${escapeHtml(figure.id)}" type="button">
+                    ${isFigureSelected(figure.id) ? "Added" : "Add to chat"}
+                  </button>
+                </div>
               </div>
-              <strong>${escapeHtml(figure.label || figure.title || "Visual")}</strong>
+              <strong>${escapeHtml(figureTitle(figure))}</strong>
               ${figure.title ? `<p>${escapeHtml(figure.title)}</p>` : ""}
               ${figure.caption ? `<p><b>Caption:</b> ${escapeHtml(figure.caption)}</p>` : ""}
               ${figure.explanation ? `<p><b>Figure explanation:</b> ${escapeHtml(figure.explanation)}</p>` : ""}
@@ -149,6 +244,10 @@ function renderFigures() {
       )
       .join(""),
   );
+
+  els.list?.querySelectorAll("[data-add-figure]").forEach((button) => {
+    button.addEventListener("click", () => addFigureToChat(button.dataset.addFigure || ""));
+  });
 }
 
 async function loadPaper() {
@@ -165,6 +264,7 @@ async function loadPaper() {
 async function loadFigures() {
   const payload = await requestJson(`/api/papers/${state.paperId}/figures`);
   state.figures = payload.figures || [];
+  syncSelectedFigures();
   state.warnings = payload.warnings || [];
   state.providerUsed = payload.provider_used || "unknown";
   setStatus(
@@ -174,6 +274,7 @@ async function loadFigures() {
     state.providerUsed,
   );
   renderFigures();
+  renderFigureFocus();
 }
 
 async function analyzeFigures(force = false) {
@@ -190,6 +291,7 @@ async function analyzeFigures(force = false) {
       body: JSON.stringify({ provider: "codex", force }),
     });
     state.figures = payload.figures || [];
+    syncSelectedFigures();
     state.warnings = payload.warnings || [];
     state.providerUsed = payload.provider_used || "unknown";
     setStatus(
@@ -203,6 +305,121 @@ async function analyzeFigures(force = false) {
   } finally {
     state.running = false;
     renderFigures();
+    renderFigureFocus();
+  }
+}
+
+function renderChat() {
+  if (!els.chatMessages) {
+    return;
+  }
+
+  if (!state.chatMessages.length) {
+    setHtml(els.chatMessages, `<div class="muted-box">Ask about this paper or selected figures.</div>`);
+    return;
+  }
+
+  els.chatMessages.replaceChildren();
+  for (const message of state.chatMessages) {
+    const role = message.role === "user" ? "user" : "assistant";
+    const article = document.createElement("article");
+    article.className = `chat-message ${role}`;
+
+    const label = document.createElement("strong");
+    label.textContent = role === "user" ? "You" : "Assistant";
+
+    const body = document.createElement("p");
+    appendChatText(body, message.content);
+
+    article.append(label, body);
+    els.chatMessages.appendChild(article);
+  }
+
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function appendChatText(target, value) {
+  const text = String(value);
+  const urlPattern = /https?:\/\/[^\s<>"']+/g;
+  let cursor = 0;
+
+  for (const match of text.matchAll(urlPattern)) {
+    appendTextSegment(target, text.slice(cursor, match.index));
+
+    const link = document.createElement("a");
+    link.href = match[0];
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = match[0];
+    target.appendChild(link);
+
+    cursor = match.index + match[0].length;
+  }
+
+  appendTextSegment(target, text.slice(cursor));
+}
+
+function appendTextSegment(target, text) {
+  const lines = text.split("\n");
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      target.appendChild(document.createElement("br"));
+    }
+    if (line) {
+      target.appendChild(document.createTextNode(line));
+    }
+  });
+}
+
+function selectedFigureContext() {
+  return state.selectedFigures.map((figure) => ({
+    id: figure.id,
+    page_number: figure.page_number,
+    type: figure.type,
+    label: figure.label,
+    title: figure.title,
+    caption: figure.caption,
+    explanation: figure.explanation,
+    why_it_matters: figure.why_it_matters,
+    uncertainty: figure.uncertainty,
+  }));
+}
+
+async function sendChatMessage(content) {
+  if (!state.paperId || state.chatRunning) {
+    return;
+  }
+  state.chatRunning = true;
+  state.chatMessages.push({ role: "user", content });
+  if (els.chatInput) {
+    els.chatInput.value = "";
+    resizeChatInput();
+  }
+
+  const pending = { role: "assistant", content: "Thinking..." };
+  state.chatMessages.push(pending);
+  renderChat();
+
+  try {
+    const payload = await requestJson(`/api/papers/${state.paperId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: state.chatMessages.filter((message) => message.content !== "Thinking..."),
+        use_web: false,
+        figure_context: selectedFigureContext(),
+      }),
+    });
+
+    pending.content = payload.answer || "No answer returned.";
+    if (payload.warnings?.length) {
+      pending.content += `\n\n${payload.warnings.join("\n")}`;
+    }
+  } catch (error) {
+    pending.content = error.message || String(error);
+  } finally {
+    state.chatRunning = false;
+    renderChat();
   }
 }
 
@@ -214,6 +431,20 @@ els.reanalyzeButton?.addEventListener("click", () => {
   });
 });
 
+els.chatForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const content = els.chatInput?.value.trim() || "";
+  if (!content) {
+    return;
+  }
+  sendChatMessage(content).catch((error) => {
+    state.chatMessages.push({ role: "assistant", content: error.message || String(error) });
+    renderChat();
+  });
+});
+
+els.chatInput?.addEventListener("input", resizeChatInput);
+
 async function init() {
   if (!state.paperId) {
     setStatus("Paper not found.", "Error");
@@ -223,6 +454,8 @@ async function init() {
 
   await loadPaper();
   await loadFigures();
+  renderChat();
+  resizeChatInput();
   if (!state.figures.length) {
     await analyzeFigures(false);
   }

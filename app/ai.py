@@ -538,6 +538,7 @@ def build_chat_prompt(
     excerpts: list[dict[str, Any]],
     web_results: list[dict[str, str]],
     citation_context: dict[str, Any] | None = None,
+    figure_context: list[dict[str, Any]] | None = None,
 ) -> str:
     history = "\n".join(f"{item['role']}: {item['content']}" for item in messages[-8:])
     excerpt_text = "\n".join(
@@ -547,6 +548,7 @@ def build_chat_prompt(
         f"- {item['title']} ({item['url']}): {item.get('snippet', '')}" for item in web_results
     )
     citation_text = format_citation_context(citation_context)
+    figure_text = format_figure_context(figure_context)
     return f"""
 Paper: {paper.get("title", "Untitled")}
 
@@ -561,6 +563,9 @@ Relevant paper excerpts:
 
 Citation focus:
 {citation_text}
+
+Figure focus:
+{figure_text}
 
 Web results:
 {web_text or "None"}
@@ -594,6 +599,36 @@ Reference: {normalize_text(str(citation_context.get("raw_reference", "")))[:1400
 Inline citation contexts:
 {chr(10).join(context_lines) if context_lines else "No inline citation context extracted."}
 """.strip()
+
+
+def format_figure_context(figure_context: list[dict[str, Any]] | None) -> str:
+    if not figure_context:
+        return "None"
+
+    lines = []
+    for index, figure in enumerate(figure_context[:6], start=1):
+        page_number = figure.get("page_number") or "?"
+        title = normalize_text(str(figure.get("title") or figure.get("label") or "Visual"))[:300]
+        figure_type = normalize_text(str(figure.get("type", "")))[:80]
+        caption = normalize_text(str(figure.get("caption", "")))[:700]
+        explanation = normalize_text(str(figure.get("explanation", "")))[:900]
+        why_it_matters = normalize_text(str(figure.get("why_it_matters", "")))[:700]
+        uncertainty = normalize_text(str(figure.get("uncertainty", "")))[:400]
+
+        parts = [f"Figure {index}: {title}", f"Page: {page_number}"]
+        if figure_type:
+            parts.append(f"Type: {figure_type}")
+        if caption:
+            parts.append(f"Caption: {caption}")
+        if explanation:
+            parts.append(f"Explanation: {explanation}")
+        if why_it_matters:
+            parts.append(f"Why it matters: {why_it_matters}")
+        if uncertainty:
+            parts.append(f"Uncertainty: {uncertainty}")
+        lines.append("\n".join(parts))
+
+    return "\n\n".join(lines)
 
 
 def build_selection_explanation_prompt(
@@ -649,12 +684,13 @@ def answer_chat(
     provider: str | None,
     citation_context: dict[str, Any] | None = None,
     api_key: str | None = None,
+    figure_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     last_question = next((item["content"] for item in reversed(messages) if item.get("role") == "user"), "")
     excerpts = select_relevant_excerpts(last_question, paper.get("sentences", []))
     selected_provider = choose_provider(provider, api_key)
 
-    prompt = build_chat_prompt(paper, messages, excerpts, web_results, citation_context)
+    prompt = build_chat_prompt(paper, messages, excerpts, web_results, citation_context, figure_context)
     answer, provider_used = run_ai(prompt, CHAT_SYSTEM, selected_provider, False, api_key)
 
     return {

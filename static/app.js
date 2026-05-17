@@ -326,6 +326,8 @@ async function removePaper(paperId) {
     clearSelectedPaper();
     if (state.papers.length) {
       await selectPaper(state.papers[0].id);
+    } else {
+      renderPaperList();
     }
   } else {
     renderPaperList();

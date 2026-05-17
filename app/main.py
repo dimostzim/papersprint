@@ -31,6 +31,7 @@ PAPERS_DIR = SESSION_DIR / "papers"
 FIGURES_DIR = SESSION_DIR / "figures"
 CACHE_PAPERS_DIR = CACHE_DIR / "papers"
 CACHE_RECORDS_DIR = CACHE_DIR / "records"
+CACHE_FIGURES_DIR = CACHE_DIR / "figures"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
@@ -39,6 +40,7 @@ PAPERS_DIR.mkdir(parents=True, exist_ok=True)
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_PAPERS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 PAPERS: dict[str, dict[str, Any]] = {}
 
 app = FastAPI(title="PaperSprint")
@@ -57,6 +59,7 @@ class ChatRequest(BaseModel):
     provider: str | None = None
     api_key: str | None = None
     citation_context: dict[str, Any] | None = None
+    figure_context: list[dict[str, Any]] | None = None
 
 
 class FigureAnalysisRequest(BaseModel):
@@ -97,6 +100,63 @@ def cache_pdf_path(digest: str) -> Path:
     return CACHE_PAPERS_DIR / f"{digest}.pdf"
 
 
+def cache_figures_path(digest: str) -> Path:
+    return figure_directory(CACHE_FIGURES_DIR, digest)
+
+
+def copy_figure_directory(source: Path, target: Path) -> None:
+    shutil.rmtree(target, ignore_errors=True)
+    if source.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, target)
+
+
+def restore_cached_figures(digest: str, paper_id: str, paper: dict[str, Any]) -> None:
+    if not paper.get("figures"):
+        paper["figures"] = []
+        paper["figure_warnings"] = paper.get("figure_warnings", [])
+        paper["figure_provider_used"] = paper.get("figure_provider_used", "unknown")
+        return
+
+    source_figures = cache_figures_path(digest)
+    if source_figures.exists():
+        copy_figure_directory(source_figures, figure_directory(FIGURES_DIR, paper_id))
+        return
+
+    paper["figures"] = []
+    paper["figure_warnings"] = []
+    paper["figure_provider_used"] = "unknown"
+
+
+def restore_cached_figure_analysis(digest: str, paper_id: str, paper: dict[str, Any]) -> None:
+    record_path = cache_record_path(digest)
+    if not record_path.exists():
+        return
+
+    cached = json.loads(record_path.read_text(encoding="utf-8"))
+    if not cached.get("figures"):
+        return
+
+    paper["figures"] = cached.get("figures", [])
+    paper["figure_warnings"] = cached.get("figure_warnings", [])
+    paper["figure_provider_used"] = cached.get("figure_provider_used", "unknown")
+    restore_cached_figures(digest, paper_id, paper)
+
+
+def cache_figure_images(digest: str, paper: dict[str, Any]) -> bool:
+    target_figures = cache_figures_path(digest)
+    if not paper.get("figures"):
+        shutil.rmtree(target_figures, ignore_errors=True)
+        return False
+
+    source_figures = figure_directory(FIGURES_DIR, str(paper.get("id", "")))
+    if source_figures.exists():
+        copy_figure_directory(source_figures, target_figures)
+        return True
+
+    return target_figures.exists()
+
+
 def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) -> dict[str, Any] | None:
     record_path = cache_record_path(digest)
     source_pdf = cache_pdf_path(digest)
@@ -112,12 +172,10 @@ def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) 
             "id": paper_id,
             "filename": filename,
             "stored_pdf": stored_pdf,
-            "figures": [],
-            "figure_warnings": [],
-            "figure_provider_used": "unknown",
         }
     )
     shutil.copyfile(source_pdf, PAPERS_DIR / stored_pdf)
+    restore_cached_figures(digest, paper_id, paper)
     return paper
 
 
@@ -128,11 +186,13 @@ def cache_paper(paper: dict[str, Any], pdf_path: Path) -> None:
 
     CACHE_PAPERS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(pdf_path, cache_pdf_path(digest))
     cached = dict(paper)
-    cached["figures"] = []
-    cached["figure_warnings"] = []
-    cached["figure_provider_used"] = "unknown"
+    if not cache_figure_images(digest, cached):
+        cached["figures"] = []
+        cached["figure_warnings"] = []
+        cached["figure_provider_used"] = "unknown"
     cache_record_path(digest).write_text(json.dumps(cached), encoding="utf-8")
 
 
@@ -140,11 +200,13 @@ def delete_cached_paper(digest: str, paper_id: str) -> None:
     if digest:
         cache_pdf_path(digest).unlink(missing_ok=True)
         cache_record_path(digest).unlink(missing_ok=True)
+        shutil.rmtree(cache_figures_path(digest), ignore_errors=True)
         return
 
     for directory, suffix in ((CACHE_PAPERS_DIR, ".pdf"), (CACHE_RECORDS_DIR, ".json")):
         for path in directory.glob(f"{paper_id}*{suffix}"):
             path.unlink(missing_ok=True)
+    shutil.rmtree(figure_directory(CACHE_FIGURES_DIR, paper_id), ignore_errors=True)
 
 
 def public_figures(paper_id: str, figures: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -354,6 +416,7 @@ async def upload_paper(file: UploadFile = File(...)):
         pdf_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is not a readable PDF.") from error
 
+    restore_cached_figure_analysis(digest, paper_id, paper)
     write_paper(paper)
     return public_paper(paper, include_details=True)
 
@@ -476,6 +539,7 @@ async def analyze_paper_figures(paper_id: str, request: FigureAnalysisRequest):
     latest_paper = read_paper(paper_id)
     latest_paper.update(result)
     write_paper(latest_paper)
+    cache_paper(latest_paper, pdf_path)
     return {
         "figures": public_figures(paper_id, latest_paper.get("figures", [])),
         "warnings": latest_paper.get("figure_warnings", []),
@@ -524,6 +588,7 @@ async def chat_with_paper(paper_id: str, request: ChatRequest):
             request.provider,
             request.citation_context,
             request.api_key,
+            request.figure_context,
         )
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
