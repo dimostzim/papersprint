@@ -179,6 +179,43 @@ def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) 
     return paper
 
 
+def cached_paper_from_record(record_path: Path) -> dict[str, Any] | None:
+    digest = record_path.stem
+    source_pdf = cache_pdf_path(digest)
+    if not source_pdf.exists():
+        return None
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    paper_id = digest[:12]
+    filename = str(record.get("filename") or f"{paper_id}.pdf")
+    stored_pdf = f"{paper_id}-{slugify(Path(filename).stem)}.pdf"
+
+    cached = cached_analysis(digest, paper_id, filename, stored_pdf)
+    if cached:
+        return cached
+
+    if not record.get("figures"):
+        return None
+
+    pdf_path = PAPERS_DIR / stored_pdf
+    shutil.copyfile(source_pdf, pdf_path)
+    paper = build_uploaded_paper_record(pdf_path, paper_id, filename, digest)
+    restore_cached_figure_analysis(digest, paper_id, paper)
+    return paper
+
+
+def restore_all_cached_papers() -> int:
+    loaded_count = 0
+    record_paths = sorted(CACHE_RECORDS_DIR.glob("*.json"), key=lambda path: path.stat().st_mtime)
+    for record_path in record_paths:
+        paper = cached_paper_from_record(record_path)
+        if not paper:
+            continue
+        write_paper(paper)
+        loaded_count += 1
+    return loaded_count
+
+
 def cache_paper(paper: dict[str, Any], pdf_path: Path) -> None:
     digest = str(paper.get("digest", ""))
     if not digest:
@@ -384,6 +421,15 @@ def settings():
 @app.get("/api/papers")
 def list_papers():
     return {"papers": [public_paper(paper) for paper in reversed(PAPERS.values())]}
+
+
+@app.post("/api/papers/refresh-cache")
+def refresh_papers_from_cache():
+    loaded_count = restore_all_cached_papers()
+    return {
+        "loaded_count": loaded_count,
+        "papers": [public_paper(paper) for paper in reversed(PAPERS.values())],
+    }
 
 
 @app.post("/api/upload")

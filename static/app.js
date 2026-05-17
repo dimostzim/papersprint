@@ -230,7 +230,11 @@ function requireOpenAiKey() {
 
 async function loadPapers(selectFirst = true) {
   const payload = await requestJson("/api/papers");
-  state.papers = payload.papers || [];
+  await applyPaperSummaries(payload.papers || [], selectFirst);
+}
+
+async function applyPaperSummaries(papers, selectFirst = true) {
+  state.papers = papers;
   if (state.selectedPaper && !state.papers.some((paper) => paper.id === state.selectedPaper.id)) {
     state.selectedPaper = null;
     syncPaperActions();
@@ -241,6 +245,25 @@ async function loadPapers(selectFirst = true) {
   } else if (!state.papers.length) {
     clearSelectedPaper();
   }
+}
+
+async function refreshPapersFromCache() {
+  showToast("Loading cached papers", true);
+  const selectedId = state.selectedPaper?.id || null;
+  const payload = await requestJson("/api/papers/refresh-cache", { method: "POST" });
+  await applyPaperSummaries(payload.papers || [], false);
+
+  const nextId = selectedId && state.papers.some((paper) => paper.id === selectedId)
+    ? selectedId
+    : state.papers[0]?.id;
+  if (nextId) {
+    await selectPaper(nextId);
+  } else {
+    clearSelectedPaper();
+  }
+
+  hideToast();
+  showToast(`Loaded ${payload.loaded_count || 0} cached paper${payload.loaded_count === 1 ? "" : "s"}`);
 }
 
 function renderPaperList() {
@@ -1281,7 +1304,10 @@ els.citationPopover?.addEventListener("click", (event) => {
 });
 
 els.refreshButton?.addEventListener("click", () => {
-  loadPapers(false).catch((error) => showToast(error.message || String(error)));
+  refreshPapersFromCache().catch((error) => {
+    hideToast();
+    showToast(error.message || String(error));
+  });
 });
 
 els.figuresButton?.addEventListener("click", () => {

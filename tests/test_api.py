@@ -189,6 +189,67 @@ def test_cache_paper_persists_figure_records_and_images(tmp_path, monkeypatch):
     assert (main.figure_directory(cache_figures_dir, "digest-1") / "p1-1.jpg").exists()
 
 
+def test_refresh_cache_loads_cached_papers_and_figures(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes()
+    digest = main.file_digest(data)
+    (cache_papers_dir / f"{digest}.pdf").write_bytes(data)
+    cached_figure_dir = main.figure_directory(cache_figures_dir, digest)
+    cached_figure_dir.mkdir()
+    (cached_figure_dir / "p1-1.jpg").write_bytes(b"figure")
+    cached_record = {
+        "id": "old-id",
+        "filename": "paper.pdf",
+        "stored_pdf": "old.pdf",
+        "digest": digest,
+        "analysis_version": main.ANALYSIS_VERSION,
+        "title": "Cached paper",
+        "overview": "Already analyzed.",
+        "key_takeaways": ["Cached takeaway"],
+        "read_this_first": [],
+        "glossary": [],
+        "highlights": [{"label": "goal", "snippet": "Cached highlight", "reason": "Cached"}],
+        "figures": [{"id": "p1-1", "image_file": "p1-1.jpg", "label": "Figure 1"}],
+        "figure_warnings": [],
+        "figure_provider_used": "codex",
+        "citations": [],
+        "questions": [],
+        "provider_used": "codex",
+        "warnings": [],
+        "page_sizes": [],
+        "sentences": [],
+        "full_text_chars": 42,
+        "analysis_status": "complete",
+        "analysis_error": "",
+    }
+    (cache_records_dir / f"{digest}.json").write_text(json.dumps(cached_record), encoding="utf-8")
+
+    client = TestClient(main.app)
+    response = client.post("/api/papers/refresh-cache")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["loaded_count"] == 1
+    assert payload["papers"][0]["id"] == digest[:12]
+    assert payload["papers"][0]["highlight_count"] == 1
+    assert payload["papers"][0]["figure_count"] == 1
+    assert (papers_dir / f"{digest[:12]}-paper.pdf").exists()
+    assert (main.figure_directory(figures_dir, digest[:12]) / "p1-1.jpg").exists()
+
+
 def test_upload_ignores_stale_cached_analysis(tmp_path, monkeypatch):
     papers_dir = tmp_path / "papers"
     figures_dir = tmp_path / "figures"
