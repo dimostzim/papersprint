@@ -386,6 +386,65 @@ def test_delete_missing_paper_is_idempotent(tmp_path, monkeypatch):
     assert not cached_figures.exists()
 
 
+def test_update_highlights_persists_to_cache(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    pdf_path = papers_dir / "paper.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    main.PAPERS["paper-1"] = {
+        "id": "paper-1",
+        "filename": "paper.pdf",
+        "stored_pdf": "paper.pdf",
+        "digest": "digest-1",
+        "title": "Readable paper",
+        "highlights": [{"label": "goal", "snippet": "Old highlight", "reason": ""}],
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": [],
+        "page_sizes": [],
+        "analysis_status": "complete",
+    }
+
+    client = TestClient(main.app)
+    response = client.put(
+        "/api/papers/paper-1/highlights",
+        json={
+            "highlights": [
+                {
+                    "label": "Custom Finding",
+                    "snippet": "This manually selected sentence should stay highlighted.",
+                    "reason": "manual",
+                    "page_number": 2,
+                    "rects": [[10, 20, 100, 32]],
+                    "color": "#bb66cc",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["highlight_count"] == 1
+    assert payload["highlights"][0]["label"] == "custom finding"
+    assert payload["highlights"][0]["color"] == "#bb66cc"
+    cached_record = json.loads((cache_records_dir / "digest-1.json").read_text(encoding="utf-8"))
+    assert cached_record["highlights"][0]["snippet"] == "This manually selected sentence should stay highlighted."
+    assert cached_record["highlights"][0]["color"] == "#bb66cc"
+
+
 def test_chat_passes_figure_context(monkeypatch):
     main.PAPERS.clear()
     main.PAPERS["paper-1"] = {

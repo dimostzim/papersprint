@@ -632,6 +632,11 @@ h2 {
   opacity: 0.72;
 }
 
+.highlight-rect.active {
+  opacity: 0.78;
+  outline: 2px solid var(--accent);
+}
+
 .highlight-rect.label-goal {
   background: #72c9e8;
 }
@@ -1054,7 +1059,8 @@ h2 {
 }
 
 .selection-popover,
-.citation-popover {
+.citation-popover,
+.highlight-popover {
   position: fixed;
   z-index: 60;
   max-width: min(420px, calc(100vw - 16px));
@@ -1066,7 +1072,8 @@ h2 {
 }
 
 .selection-popover button,
-.citation-popover button {
+.citation-popover button,
+.highlight-popover button {
   height: 30px;
   border-radius: 6px;
   padding: 0 11px;
@@ -1075,6 +1082,45 @@ h2 {
   color: var(--strong-surface-text);
   font-size: 12px;
   font-weight: 800;
+}
+
+.popover-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.selection-highlight-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) 38px auto;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.selection-highlight-form select,
+.selection-highlight-form input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.selection-highlight-form input[type="color"] {
+  width: 38px;
+  padding: 2px;
+}
+
+.highlight-popover {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.highlight-popover-label {
+  max-width: 260px;
 }
 
 .citation-choice-list {

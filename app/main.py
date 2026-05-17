@@ -81,6 +81,10 @@ class SelectionExplainRequest(BaseModel):
     api_key: str | None = None
 
 
+class HighlightsUpdateRequest(BaseModel):
+    highlights: list[dict[str, Any]]
+
+
 def read_paper(paper_id: str) -> dict[str, Any]:
     paper = PAPERS.get(paper_id)
     if not paper:
@@ -256,6 +260,44 @@ def public_figures(paper_id: str, figures: list[dict[str, Any]]) -> list[dict[st
         public_item["image_url"] = f"/api/papers/{paper_id}/figures/{figure_id}/image"
         public_items.append(public_item)
     return public_items
+
+
+def clean_highlight_record(highlight: dict[str, Any]) -> dict[str, Any] | None:
+    snippet = " ".join(str(highlight.get("snippet", "")).split()).strip()
+    if not snippet:
+        return None
+
+    label = " ".join(str(highlight.get("label", "important")).split()).strip().lower()
+    if not label:
+        label = "important"
+    label = label[:40]
+
+    try:
+        page_number = int(highlight["page_number"]) if highlight.get("page_number") else None
+    except (TypeError, ValueError):
+        page_number = None
+
+    rects = []
+    if isinstance(highlight.get("rects"), list):
+        for rect in highlight["rects"]:
+            if not isinstance(rect, list) or len(rect) != 4:
+                continue
+            try:
+                rects.append([round(float(value), 2) for value in rect])
+            except (TypeError, ValueError):
+                continue
+
+    clean: dict[str, Any] = {
+        "label": label,
+        "snippet": snippet[:900],
+        "reason": " ".join(str(highlight.get("reason", "")).split()).strip()[:240],
+        "page_number": page_number,
+        "rects": rects,
+    }
+    color = str(highlight.get("color", "")).strip()
+    if color:
+        clean["color"] = color[:24]
+    return clean
 
 
 def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[str, Any]:
@@ -519,6 +561,24 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
 @app.get("/api/papers/{paper_id}")
 def get_paper(paper_id: str):
     return public_paper(read_paper(paper_id), include_details=True)
+
+
+@app.put("/api/papers/{paper_id}/highlights")
+def update_paper_highlights(paper_id: str, request: HighlightsUpdateRequest):
+    paper = read_paper(paper_id)
+    highlights = [
+        clean
+        for item in request.highlights[:120]
+        if (clean := clean_highlight_record(item))
+    ]
+    paper["highlights"] = sort_highlights(highlights)
+    write_paper(paper)
+
+    pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
+    if pdf_path.exists():
+        cache_paper(paper, pdf_path)
+
+    return public_paper(paper, include_details=True)
 
 
 @app.delete("/api/papers/{paper_id}")
