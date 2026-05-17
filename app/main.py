@@ -183,8 +183,15 @@ def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) 
     restore_cached_figures(digest, paper_id, paper)
     if paper.get("citation_version") != CITATION_VERSION:
         refresh_paper_citations(paper, pdf_path)
-        cache_paper(paper, pdf_path)
+        write_cache_record(paper)
     return paper
+
+
+def write_cache_record(paper: dict[str, Any]) -> None:
+    digest = str(paper.get("digest", ""))
+    if digest:
+        CACHE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+        cache_record_path(digest).write_text(json.dumps(paper), encoding="utf-8")
 
 
 def refresh_paper_citations(paper: dict[str, Any], pdf_path: Path) -> None:
