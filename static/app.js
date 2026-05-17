@@ -123,6 +123,14 @@ function customHighlightStyle(highlight) {
   return ` style="background: ${hexToRgba(color, 0.24)}; color: var(--ink);"`;
 }
 
+function facetChipStyle(facet) {
+  const color = safeHexColor(facet?.color);
+  if (!color) {
+    return "";
+  }
+  return ` style="--facet-color: ${color}; --facet-bg: ${hexToRgba(color, 0.26)};"`;
+}
+
 function showToast(message, sticky = false) {
   if (!els.toast) {
     return;
@@ -608,8 +616,9 @@ function renderHighlightFilters(highlights) {
     facets.map((facet) => {
       const count = facet.id === "all" ? (highlights || []).length : counts.get(facet.id) || 0;
       const active = state.activeHighlightFacet === facet.id ? "active" : "";
+      const hasColor = safeHexColor(facet.color) ? "has-color" : "";
       return `
-        <button class="facet-chip ${active}" data-highlight-facet="${facet.id}" type="button">
+        <button class="facet-chip ${active} ${hasColor}" data-highlight-facet="${escapeHtml(facet.id)}" type="button"${facetChipStyle(facet)}>
           ${escapeHtml(facet.label)}
           <span>${count}</span>
         </button>

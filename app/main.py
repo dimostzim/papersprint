@@ -17,7 +17,7 @@ from starlette.requests import Request
 
 from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_status
 from .citations import CITATION_VERSION, extract_citations, ground_citation_rects
-from .figures import analyze_figures, figure_directory
+from .figures import analyze_figures, ensure_figure_images, figure_directory
 from .paper_processing import extract_pdf, file_digest, find_exact_rects, public_page_sizes, slugify, sort_highlights
 from .web_search import search_web
 
@@ -115,12 +115,15 @@ def copy_figure_directory(source: Path, target: Path) -> None:
         shutil.copytree(source, target)
 
 
-def restore_cached_figures(digest: str, paper_id: str, paper: dict[str, Any]) -> None:
+def restore_cached_figures(digest: str, paper_id: str, paper: dict[str, Any], pdf_path: Path | None = None) -> None:
     if not paper.get("figures"):
         paper["figures"] = []
         paper["figure_warnings"] = paper.get("figure_warnings", [])
         paper["figure_provider_used"] = paper.get("figure_provider_used", "unknown")
         return
+
+    if pdf_path and pdf_path.exists():
+        ensure_figure_images(pdf_path, CACHE_FIGURES_DIR, digest, paper.get("figures", []))
 
     source_figures = cache_figures_path(digest)
     if source_figures.exists():
@@ -132,7 +135,12 @@ def restore_cached_figures(digest: str, paper_id: str, paper: dict[str, Any]) ->
     paper["figure_provider_used"] = "unknown"
 
 
-def restore_cached_figure_analysis(digest: str, paper_id: str, paper: dict[str, Any]) -> None:
+def restore_cached_figure_analysis(
+    digest: str,
+    paper_id: str,
+    paper: dict[str, Any],
+    pdf_path: Path | None = None,
+) -> None:
     record_path = cache_record_path(digest)
     if not record_path.exists():
         return
@@ -144,7 +152,7 @@ def restore_cached_figure_analysis(digest: str, paper_id: str, paper: dict[str, 
     paper["figures"] = cached.get("figures", [])
     paper["figure_warnings"] = cached.get("figure_warnings", [])
     paper["figure_provider_used"] = cached.get("figure_provider_used", "unknown")
-    restore_cached_figures(digest, paper_id, paper)
+    restore_cached_figures(digest, paper_id, paper, pdf_path)
 
 
 def cache_figure_images(digest: str, paper: dict[str, Any]) -> bool:
@@ -180,7 +188,7 @@ def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) 
     )
     pdf_path = PAPERS_DIR / stored_pdf
     shutil.copyfile(source_pdf, pdf_path)
-    restore_cached_figures(digest, paper_id, paper)
+    restore_cached_figures(digest, paper_id, paper, pdf_path)
     if paper.get("citation_version") != CITATION_VERSION:
         refresh_paper_citations(paper, pdf_path)
         write_cache_record(paper)
@@ -221,7 +229,7 @@ def cached_paper_from_record(record_path: Path) -> dict[str, Any] | None:
     pdf_path = PAPERS_DIR / stored_pdf
     shutil.copyfile(source_pdf, pdf_path)
     paper = build_uploaded_paper_record(pdf_path, paper_id, filename, digest)
-    restore_cached_figure_analysis(digest, paper_id, paper)
+    restore_cached_figure_analysis(digest, paper_id, paper, pdf_path)
     return paper
 
 
@@ -540,7 +548,7 @@ async def upload_paper(file: UploadFile = File(...)):
         pdf_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is not a readable PDF.") from error
 
-    restore_cached_figure_analysis(digest, paper_id, paper)
+    restore_cached_figure_analysis(digest, paper_id, paper, pdf_path)
     write_paper(paper)
     return public_paper(paper, include_details=True)
 
@@ -696,7 +704,14 @@ def get_figure_image(paper_id: str, figure_id: str):
     if not figure:
         raise HTTPException(status_code=404, detail="Figure not found.")
 
-    image_path = figure_directory(FIGURES_DIR, paper_id) / str(figure.get("image_file", ""))
+    image_file = Path(str(figure.get("image_file", ""))).name
+    image_path = figure_directory(FIGURES_DIR, paper_id) / image_file
+    pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
+    if not image_path.exists() and pdf_path.exists():
+        ensure_figure_images(pdf_path, FIGURES_DIR, paper_id, [figure])
+        if paper.get("digest"):
+            ensure_figure_images(pdf_path, CACHE_FIGURES_DIR, str(paper.get("digest")), [figure])
+
     if not image_path.exists():
         raise HTTPException(status_code=404, detail="Figure image not found.")
     return FileResponse(image_path, media_type="image/jpeg")

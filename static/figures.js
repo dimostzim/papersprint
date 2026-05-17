@@ -221,7 +221,7 @@ function renderFigures() {
       .map(
         (figure) => `
           <article class="figure-card">
-            <img src="${figure.image_url}" alt="" loading="lazy" />
+            <img src="${figure.image_url}" alt="" loading="eager" decoding="async" />
             <div class="figure-copy">
               <div class="figure-card-heading">
                 <span class="label label-important">${escapeHtml(figure.type || "visual")}</span>

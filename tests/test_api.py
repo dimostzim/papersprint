@@ -386,6 +386,67 @@ def test_refresh_cache_loads_cached_papers_and_figures(tmp_path, monkeypatch):
     assert (main.figure_directory(figures_dir, digest[:12]) / "p1-1.jpg").exists()
 
 
+def test_refresh_cache_repairs_missing_cached_figure_images(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes("Figure 1: Repairable visual")
+    digest = main.file_digest(data)
+    (cache_papers_dir / f"{digest}.pdf").write_bytes(data)
+    cached_record = {
+        "id": "old-id",
+        "filename": "paper.pdf",
+        "stored_pdf": "old.pdf",
+        "digest": digest,
+        "analysis_version": main.ANALYSIS_VERSION,
+        "title": "Cached paper",
+        "overview": "Already analyzed.",
+        "key_takeaways": [],
+        "read_this_first": [],
+        "glossary": [],
+        "highlights": [],
+        "figures": [
+            {
+                "id": "p1-1",
+                "page_number": 1,
+                "image_file": "p1-1.jpg",
+                "bbox_pct": [0, 0, 100, 100],
+                "label": "Figure 1",
+            }
+        ],
+        "figure_warnings": [],
+        "figure_provider_used": "codex",
+        "citations": [],
+        "questions": [],
+        "provider_used": "codex",
+        "warnings": [],
+        "page_sizes": [],
+        "sentences": [],
+        "full_text_chars": 42,
+        "analysis_status": "complete",
+        "analysis_error": "",
+    }
+    (cache_records_dir / f"{digest}.json").write_text(json.dumps(cached_record), encoding="utf-8")
+
+    client = TestClient(main.app)
+    response = client.post("/api/papers/refresh-cache")
+
+    assert response.status_code == 200
+    assert (main.figure_directory(cache_figures_dir, digest) / "p1-1.jpg").exists()
+    assert (main.figure_directory(figures_dir, digest[:12]) / "p1-1.jpg").exists()
+
+
 def test_upload_ignores_stale_cached_analysis(tmp_path, monkeypatch):
     papers_dir = tmp_path / "papers"
     figures_dir = tmp_path / "figures"

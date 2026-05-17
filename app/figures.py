@@ -59,6 +59,38 @@ def crop_figure_image(pdf_path: Path, page_number: int, bbox_pct: list[float], o
         doc.close()
 
 
+def ensure_figure_images(
+    pdf_path: Path,
+    figures_dir: Path,
+    paper_id: str,
+    figures: list[dict[str, Any]],
+) -> None:
+    if not figures or not pdf_path.exists():
+        return
+
+    paper_dir = figure_directory(figures_dir, paper_id)
+    for figure in figures:
+        image_file = Path(str(figure.get("image_file", ""))).name
+        if not image_file:
+            continue
+
+        try:
+            page_number = int(figure.get("page_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if page_number < 1:
+            continue
+
+        image_path = paper_dir / image_file
+        if image_path.exists():
+            continue
+
+        try:
+            crop_figure_image(pdf_path, page_number, coerce_bbox_pct(figure.get("bbox_pct")), image_path)
+        except (IndexError, RuntimeError, ValueError, fitz.FileDataError, fitz.EmptyFileError):
+            continue
+
+
 def coerce_bbox_pct(value: Any) -> list[float]:
     if not isinstance(value, list) or len(value) != 4:
         return [0.0, 0.0, 100.0, 100.0]
