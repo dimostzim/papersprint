@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Figures - Paper Reader AI</title>
+    <link rel="stylesheet" href="/static/styles.css?v=13" />
+  </head>
+  <body class="figures-body" data-paper-id="{{ paper_id }}">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">PR</span>
+        <div>
+          <strong>Paper Reader AI</strong>
+          <span id="figures-provider">Figures</span>
+        </div>
+      </div>
+
+      <div class="figure-page-actions">
+        <a class="button-link" href="/">Reader</a>
+        <button id="reanalyze-figures-button" type="button" disabled>Analyze</button>
+      </div>
+    </header>
+
+    <main class="figures-main">
+      <section class="figures-heading">
+        <div>
+          <span id="figures-status-pill" class="provider-pill">Waiting</span>
+          <h1 id="figures-title">Figures</h1>
+        </div>
+        <p id="figures-status">Loading paper.</p>
+      </section>
+
+      <section id="figure-warnings" class="hidden"></section>
+      <section id="figures-list" class="figure-grid"></section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script type="module" src="/static/figures.js?v=13"></script>
+  </body>
+</html>

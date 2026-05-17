@@ -1,0 +1,154 @@
+import fitz
+
+from app.citations import expand_citation_numbers, extract_citations, ground_citation_rects
+from app.paper_processing import ExtractedPaper
+
+
+def extracted_from_pages(*texts: str) -> ExtractedPaper:
+    pages = [
+        {
+            "page_number": index + 1,
+            "width": 600,
+            "height": 800,
+            "text": text,
+        }
+        for index, text in enumerate(texts)
+    ]
+    return ExtractedPaper("Citation paper", "\n\n".join(texts), pages, [])
+
+
+def test_expand_citation_numbers_handles_lists_and_ranges():
+    assert expand_citation_numbers("8-14") == [8, 9, 10, 11, 12, 13, 14]
+    assert expand_citation_numbers("7, 8, 11-13") == [7, 8, 11, 12, 13]
+    assert expand_citation_numbers("2; 5") == [2, 5]
+
+
+def test_extract_citations_keeps_short_inline_contexts_and_single_reference():
+    extracted = extracted_from_pages(
+        "Prior work [1].",
+        "References\n[1] A. Reader. 2022. Short Citation. CHI.",
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "[1]"
+    assert citations[0]["title"] == "Short Citation"
+    assert citations[0]["contexts"][0]["sentence"] == "Prior work [1]."
+
+
+def test_extract_citations_maps_references_to_inline_contexts():
+    extracted = extracted_from_pages(
+        (
+            "Prior work created paper cards for inline citations [1, 2]. "
+            "Later systems extended citation reading with localized contexts [3-4]."
+        ),
+        (
+            "REFERENCES\n"
+            "[1] Jane Doe and John Roe. 2020. Paper Cards for Research Readers. CHI.\n"
+            "[2] Pat Smith. 2021. Citation Popups in Scholarly PDFs. UIST.\n"
+            "[3] Rui Li. 2022. Local Citation Contexts. IUI.\n"
+            "[4] A. Kim. 2023. Future Work in Citation Readers. CSCW."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == ["[1]", "[2]", "[3]", "[4]"]
+    assert citations[0]["title"] == "Paper Cards for Research Readers"
+    assert citations[0]["year"] == "2020"
+    assert citations[0]["contexts"][0]["page_number"] == 1
+    assert citations[2]["contexts"][0]["marker"] == "[3-4]"
+
+
+def test_extract_citations_keeps_inline_citations_when_references_are_missing():
+    extracted = extracted_from_pages(
+        "A reader may still cite prior work in the body before extraction finds the reference list [12]."
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "[12]"
+    assert citations[0]["raw_reference"] == ""
+    assert citations[0]["context_count"] == 1
+
+
+def test_extract_citations_maps_author_year_references_to_contexts():
+    extracted = extracted_from_pages(
+        (
+            "CLASH revealed frequent noncanonical binding (Helwak et al. 2013). "
+            "A later chimeric eCLIP dataset was described by Manakov et al. (2022)."
+        ),
+        (
+            "References\n"
+            "Helwak A, Kudla G, Dudnakova T et al. Mapping the human miRNA "
+            "interactome by CLASH reveals frequent noncanonical binding. Cell "
+            "2013;153:654-65.\n"
+            "Manakov SA et al. Scalable and deep profiling of mRNA targets for "
+            "individual microRNAs with chimeric eCLIP. bioRxiv, https://doi.org/ "
+            "10.1101/2022.02.13.480296, 2022, preprint: not peer reviewed.\n"
+            "Calin GA, Croce CM. MicroRNA signatures in human cancers. Nat "
+            "Rev Cancer 2006;6:857-66."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == [
+        "Helwak et al. 2013",
+        "Manakov et al. 2022",
+        "Calin 2006",
+    ]
+    assert citations[0]["title"] == "Mapping the human miRNA interactome by CLASH reveals frequent noncanonical binding"
+    assert citations[0]["contexts"][0]["marker"] == "Helwak et al. 2013"
+    assert citations[1]["contexts"][0]["marker"] == "Manakov et al. (2022)"
+
+
+def test_extract_citations_maps_author_year_mentions_with_comma():
+    extracted = extracted_from_pages(
+        "Prior work follows Smith et al., 2020.",
+        "References\nSmith J et al. Useful citation detection for papers. Nature 2020;1:1-2.",
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "Smith et al. 2020"
+    assert citations[0]["contexts"][0]["marker"] == "Smith et al., 2020"
+
+
+def test_extract_citations_maps_two_author_mentions_to_contexts():
+    extracted = extracted_from_pages(
+        "Disease studies discuss signatures in cancer (Calin and Croce 2006).",
+        (
+            "References\n"
+            "Calin GA, Croce CM. MicroRNA signatures in human cancers. Nat "
+            "Rev Cancer 2006;6:857-66."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["second_author"] == "Croce"
+    assert citations[0]["contexts"][0]["marker"] == "Calin and Croce 2006"
+
+
+def test_ground_citation_rects_uses_spacing_variants(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=400, height=200)
+    page.insert_text((40, 60), "Prior work [1,2] supports this method.")
+    doc.save(pdf_path)
+    doc.close()
+
+    extracted = extracted_from_pages(
+        "Prior work [1, 2] supports this method.",
+        (
+            "References\n"
+            "[1] Jane Doe. 2020. First Reference. CHI.\n"
+            "[2] Pat Smith. 2021. Second Reference. UIST."
+        ),
+    )
+
+    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
+
+    assert citations[0]["contexts"][0]["rects"]
+    assert citations[1]["contexts"][0]["rects"]

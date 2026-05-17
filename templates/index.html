@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paper Reader AI</title>
+    <link rel="stylesheet" href="/static/styles.css?v=13" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">PR</span>
+        <div>
+          <strong>Paper Reader AI</strong>
+          <span id="provider-status">Loading</span>
+        </div>
+      </div>
+
+      <form id="upload-form" class="upload-form">
+        <select id="provider-select" aria-label="AI provider">
+          <option value="auto">Auto</option>
+          <option value="codex">Codex subscription</option>
+          <option value="openai">OpenAI API key</option>
+        </select>
+        <input
+          id="api-key-input"
+          class="api-key-input hidden"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="OpenAI API key"
+          aria-label="OpenAI API key"
+        />
+        <label class="highlight-picker">
+          <span>Highlights</span>
+          <input id="highlight-count-input" type="number" min="1" max="40" value="15" />
+        </label>
+        <label class="file-picker">
+          <input id="pdf-input" type="file" accept="application/pdf,.pdf" />
+          <span>Choose PDF</span>
+        </label>
+        <button type="submit">Analyze</button>
+        <button id="figures-button" type="button" disabled>Figures</button>
+      </form>
+    </header>
+
+    <main class="workspace">
+      <aside class="library-panel">
+        <div class="panel-header">
+          <h2>Papers</h2>
+          <button id="refresh-button" class="icon-button" title="Refresh papers" type="button">↻</button>
+        </div>
+        <div id="paper-list" class="paper-list"></div>
+
+        <section class="highlights-section">
+          <div class="panel-header">
+            <h2>Highlights</h2>
+            <span id="highlight-count">0</span>
+          </div>
+          <div id="highlight-list" class="highlight-list"></div>
+        </section>
+      </aside>
+
+      <section class="reader-panel">
+        <div id="reader-empty" class="empty-state">
+          <strong>No paper selected</strong>
+          <span>Choose a PDF to load it.</span>
+        </div>
+        <div id="pdf-viewer" class="pdf-viewer hidden"></div>
+      </section>
+
+      <aside class="assistant-panel">
+        <section class="summary-panel">
+          <div class="paper-heading">
+            <span id="paper-provider" class="provider-pill">Idle</span>
+            <h1 id="paper-title">Paper Reader AI</h1>
+          </div>
+          <p id="paper-overview"></p>
+
+          <h2 class="summary-section-title">Takeaways</h2>
+          <div id="takeaways-tab" class="tab-panel"></div>
+        </section>
+
+        <section class="chat-panel">
+          <div class="chat-header">
+            <h2>Chat</h2>
+            <label class="toggle">
+              <input id="web-toggle" type="checkbox" checked />
+              <span>Web</span>
+            </label>
+          </div>
+          <div id="chat-messages" class="chat-messages"></div>
+          <form id="chat-form" class="chat-form">
+            <textarea id="chat-input" rows="1" placeholder="Ask about this paper"></textarea>
+            <button type="submit">Send</button>
+          </form>
+        </section>
+      </aside>
+    </main>
+
+    <div id="selection-popover" class="selection-popover hidden">
+      <button id="explain-selection-button" type="button">Explain</button>
+    </div>
+    <div id="citation-popover" class="citation-popover hidden">
+      <button id="add-citation-button" type="button">Add to chat</button>
+    </div>
+    <div id="toast" class="toast hidden"></div>
+    <script type="module" src="/static/app.js?v=13"></script>
+  </body>
+</html>

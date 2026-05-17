@@ -1,0 +1,480 @@
+from __future__ import annotations
+
+import asyncio
+import shutil
+from pathlib import Path
+from typing import Any
+
+import fitz
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from starlette.requests import Request
+
+from .ai import analyze_paper, answer_chat, answer_selection_explanation, provider_status
+from .citations import extract_citations, ground_citation_rects
+from .figures import analyze_figures, figure_directory
+from .paper_processing import extract_pdf, file_digest, public_page_sizes, slugify, sort_highlights
+from .web_search import search_web
+
+load_dotenv()
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+SESSION_DIR = DATA_DIR / "session"
+PAPERS_DIR = SESSION_DIR / "papers"
+FIGURES_DIR = SESSION_DIR / "figures"
+STATIC_DIR = BASE_DIR / "static"
+TEMPLATES_DIR = BASE_DIR / "templates"
+DEFAULT_HIGHLIGHT_COUNT = 15
+MIN_HIGHLIGHT_COUNT = 1
+MAX_HIGHLIGHT_COUNT = 40
+
+shutil.rmtree(SESSION_DIR, ignore_errors=True)
+PAPERS_DIR.mkdir(parents=True, exist_ok=True)
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+PAPERS: dict[str, dict[str, Any]] = {}
+
+app = FastAPI(title="Paper Reader AI")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+    use_web: bool = False
+    provider: str | None = None
+    api_key: str | None = None
+    citation_context: dict[str, Any] | None = None
+
+
+class FigureAnalysisRequest(BaseModel):
+    provider: str | None = None
+    api_key: str | None = None
+    force: bool = False
+
+
+class AnalysisRequest(BaseModel):
+    provider: str | None = "auto"
+    api_key: str | None = None
+    highlight_count: int = DEFAULT_HIGHLIGHT_COUNT
+
+
+class SelectionExplainRequest(BaseModel):
+    selected_text: str
+    page_number: int | None = None
+    page_text: str = ""
+    provider: str | None = None
+    api_key: str | None = None
+
+
+def read_paper(paper_id: str) -> dict[str, Any]:
+    paper = PAPERS.get(paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found.")
+    return paper
+
+
+def write_paper(paper: dict[str, Any]) -> None:
+    PAPERS[paper["id"]] = paper
+
+
+def validate_highlight_count(highlight_count: int) -> int:
+    if not MIN_HIGHLIGHT_COUNT <= highlight_count <= MAX_HIGHLIGHT_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Choose between {MIN_HIGHLIGHT_COUNT} and {MAX_HIGHLIGHT_COUNT} highlights.",
+        )
+    return highlight_count
+
+
+def public_figures(paper_id: str, figures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    public_items = []
+    for figure in figures:
+        figure_id = figure.get("id")
+        if not figure_id:
+            continue
+        public_item = {key: value for key, value in figure.items() if key != "image_file"}
+        public_item["image_url"] = f"/api/papers/{paper_id}/figures/{figure_id}/image"
+        public_items.append(public_item)
+    return public_items
+
+
+def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[str, Any]:
+    highlights = sort_highlights(paper.get("highlights", []))
+    base = {
+        "id": paper["id"],
+        "filename": paper["filename"],
+        "title": paper["title"],
+        "overview": paper.get("overview", ""),
+        "provider_used": paper.get("provider_used", "unknown"),
+        "warnings": paper.get("warnings", []),
+        "analysis_status": paper.get("analysis_status", "complete"),
+        "analysis_error": paper.get("analysis_error", ""),
+        "highlight_target": paper.get("highlight_target", DEFAULT_HIGHLIGHT_COUNT),
+        "highlight_count": len(highlights),
+        "figure_count": len(paper.get("figures", [])),
+        "citation_count": len(paper.get("citations", [])),
+    }
+    if include_details:
+        base.update(
+            {
+                "key_takeaways": paper.get("key_takeaways", []),
+                "read_this_first": paper.get("read_this_first", []),
+                "glossary": paper.get("glossary", []),
+                "highlights": highlights,
+                "figures": public_figures(paper["id"], paper.get("figures", [])),
+                "figure_warnings": paper.get("figure_warnings", []),
+                "figure_provider_used": paper.get("figure_provider_used", "unknown"),
+                "citations": paper.get("citations", []),
+                "questions": paper.get("questions", []),
+                "page_sizes": paper.get("page_sizes", []),
+            }
+        )
+    return base
+
+
+def build_paper_record(
+    pdf_path: Path,
+    paper_id: str,
+    filename: str,
+    provider: str | None,
+    highlight_count: int,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    extracted = extract_pdf(pdf_path)
+    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
+    analysis = analyze_paper(pdf_path, extracted, provider, highlight_count, api_key)
+    return {
+        "id": paper_id,
+        "filename": filename,
+        "stored_pdf": pdf_path.name,
+        "title": analysis.get("title") or extracted.title,
+        "overview": analysis.get("overview", ""),
+        "key_takeaways": analysis.get("key_takeaways", []),
+        "read_this_first": analysis.get("read_this_first", []),
+        "glossary": analysis.get("glossary", []),
+        "highlights": sort_highlights(analysis.get("highlights", [])),
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": citations,
+        "questions": analysis.get("questions", []),
+        "provider_used": analysis.get("provider_used", "unknown"),
+        "warnings": analysis.get("warnings", []),
+        "page_sizes": public_page_sizes(extracted.pages),
+        "sentences": [
+            {
+                "text": span.text,
+                "page_number": span.page_number,
+            }
+            for span in extracted.sentence_spans
+        ],
+        "full_text_chars": len(extracted.full_text),
+        "highlight_target": highlight_count,
+        "analysis_status": "complete",
+        "analysis_error": "",
+    }
+
+
+def build_uploaded_paper_record(
+    pdf_path: Path,
+    paper_id: str,
+    filename: str,
+) -> dict[str, Any]:
+    extracted = extract_pdf(pdf_path)
+    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
+    return {
+        "id": paper_id,
+        "filename": filename,
+        "stored_pdf": pdf_path.name,
+        "title": extracted.title or Path(filename).stem,
+        "overview": "PDF loaded. Click Analyze to generate takeaways and highlights.",
+        "key_takeaways": [],
+        "read_this_first": [],
+        "glossary": [],
+        "highlights": [],
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": citations,
+        "questions": [],
+        "provider_used": "not analyzed",
+        "warnings": [],
+        "page_sizes": public_page_sizes(extracted.pages),
+        "sentences": [
+            {
+                "text": span.text,
+                "page_number": span.page_number,
+            }
+            for span in extracted.sentence_spans
+        ],
+        "full_text_chars": len(extracted.full_text),
+        "highlight_target": DEFAULT_HIGHLIGHT_COUNT,
+        "analysis_status": "ready",
+        "analysis_error": "",
+    }
+
+
+def finish_paper_analysis(
+    pdf_path: Path,
+    paper_id: str,
+    filename: str,
+    provider: str | None,
+    highlight_count: int,
+    api_key: str | None = None,
+) -> None:
+    try:
+        paper = build_paper_record(pdf_path, paper_id, filename, provider, highlight_count, api_key)
+    except Exception as error:
+        pending = PAPERS.get(paper_id)
+        if pending:
+            pending["analysis_status"] = "error"
+            pending["analysis_error"] = str(error)
+            pending["overview"] = "Analysis failed."
+        return
+
+    existing = PAPERS.get(paper_id, {})
+    paper["figures"] = existing.get("figures", [])
+    paper["figure_warnings"] = existing.get("figure_warnings", [])
+    paper["figure_provider_used"] = existing.get("figure_provider_used", "unknown")
+    paper["citations"] = existing.get("citations") or paper.get("citations", [])
+    write_paper(paper)
+
+
+@app.get("/")
+def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/figures/{paper_id}")
+def figures_page(request: Request, paper_id: str):
+    return templates.TemplateResponse("figures.html", {"request": request, "paper_id": paper_id})
+
+
+@app.get("/api/settings")
+def settings():
+    return provider_status()
+
+
+@app.get("/api/papers")
+def list_papers():
+    return {"papers": [public_paper(paper) for paper in reversed(PAPERS.values())]}
+
+
+@app.post("/api/upload")
+async def upload_paper(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Upload a PDF file.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
+
+    digest = file_digest(data)
+    paper_id = f"{digest[:12]}-{len(PAPERS) + 1}"
+    safe_name = f"{paper_id}-{slugify(Path(file.filename).stem)}.pdf"
+    pdf_path = PAPERS_DIR / safe_name
+    pdf_path.write_bytes(data)
+
+    try:
+        paper = build_uploaded_paper_record(pdf_path, paper_id, file.filename)
+    except fitz.FileDataError as error:
+        pdf_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded file is not a readable PDF.") from error
+
+    write_paper(paper)
+    return public_paper(paper, include_details=True)
+
+
+@app.post("/api/papers/{paper_id}/analyze")
+async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
+    paper = read_paper(paper_id)
+    provider = request.provider or "auto"
+    if provider not in {"auto", "codex", "openai"}:
+        raise HTTPException(status_code=502, detail="The local fallback provider has been removed.")
+    highlight_count = validate_highlight_count(request.highlight_count)
+    pdf_path = PAPERS_DIR / paper["stored_pdf"]
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+
+    if paper.get("analysis_status") == "analyzing":
+        return public_paper(paper, include_details=True)
+
+    paper.update(
+        {
+            "overview": "Analysis is running.",
+            "key_takeaways": [],
+            "read_this_first": [],
+            "glossary": [],
+            "highlights": [],
+            "questions": [],
+            "provider_used": "pending",
+            "warnings": [],
+            "highlight_target": highlight_count,
+            "analysis_status": "analyzing",
+            "analysis_error": "",
+        }
+    )
+    write_paper(paper)
+
+    asyncio.create_task(
+        asyncio.to_thread(
+            finish_paper_analysis,
+            pdf_path,
+            paper_id,
+            paper["filename"],
+            provider,
+            highlight_count,
+            request.api_key,
+        )
+    )
+    return public_paper(paper, include_details=True)
+
+
+@app.get("/api/papers/{paper_id}")
+def get_paper(paper_id: str):
+    return public_paper(read_paper(paper_id), include_details=True)
+
+
+@app.get("/api/papers/{paper_id}/file")
+def get_paper_file(paper_id: str):
+    paper = read_paper(paper_id)
+    pdf_path = PAPERS_DIR / paper["stored_pdf"]
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+    return FileResponse(pdf_path, media_type="application/pdf", filename=paper["filename"])
+
+
+@app.get("/api/papers/{paper_id}/figures")
+def get_figures(paper_id: str):
+    paper = read_paper(paper_id)
+    return {
+        "figures": public_figures(paper_id, paper.get("figures", [])),
+        "warnings": paper.get("figure_warnings", []),
+        "provider_used": paper.get("figure_provider_used", "unknown"),
+    }
+
+
+@app.post("/api/papers/{paper_id}/figures/analyze")
+async def analyze_paper_figures(paper_id: str, request: FigureAnalysisRequest):
+    paper = read_paper(paper_id)
+    if paper.get("figures") and not request.force:
+        return {
+            "figures": public_figures(paper_id, paper.get("figures", [])),
+            "warnings": paper.get("figure_warnings", []),
+            "provider_used": paper.get("figure_provider_used", "unknown"),
+        }
+
+    pdf_path = PAPERS_DIR / paper["stored_pdf"]
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+
+    try:
+        extracted = await asyncio.to_thread(extract_pdf, pdf_path)
+        result = await asyncio.to_thread(
+            analyze_figures,
+            pdf_path,
+            extracted,
+            paper_id,
+            FIGURES_DIR,
+            request.provider,
+            request.api_key,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    latest_paper = read_paper(paper_id)
+    latest_paper.update(result)
+    write_paper(latest_paper)
+    return {
+        "figures": public_figures(paper_id, latest_paper.get("figures", [])),
+        "warnings": latest_paper.get("figure_warnings", []),
+        "provider_used": latest_paper.get("figure_provider_used", "unknown"),
+    }
+
+
+@app.get("/api/papers/{paper_id}/figures/{figure_id}/image")
+def get_figure_image(paper_id: str, figure_id: str):
+    paper = read_paper(paper_id)
+    figure = next((item for item in paper.get("figures", []) if item.get("id") == figure_id), None)
+    if not figure:
+        raise HTTPException(status_code=404, detail="Figure not found.")
+
+    image_path = figure_directory(FIGURES_DIR, paper_id) / str(figure.get("image_file", ""))
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Figure image not found.")
+    return FileResponse(image_path, media_type="image/jpeg")
+
+
+@app.post("/api/papers/{paper_id}/chat")
+async def chat_with_paper(paper_id: str, request: ChatRequest):
+    paper = read_paper(paper_id)
+    messages = [
+        {"role": message.role, "content": message.content}
+        for message in request.messages
+        if message.role in {"user", "assistant"} and message.content.strip()
+    ]
+    if not messages:
+        raise HTTPException(status_code=400, detail="Send at least one message.")
+
+    web_results = []
+    if request.use_web:
+        query = messages[-1]["content"]
+        try:
+            web_results = await asyncio.to_thread(search_web, query, 5)
+        except Exception as error:
+            web_results = [{"title": "Web search failed", "url": "", "snippet": str(error)}]
+
+    try:
+        return await asyncio.to_thread(
+            answer_chat,
+            paper,
+            messages,
+            web_results,
+            request.provider,
+            request.citation_context,
+            request.api_key,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/api/papers/{paper_id}/explain")
+async def explain_selection(paper_id: str, request: SelectionExplainRequest):
+    paper = read_paper(paper_id)
+    selected_text = request.selected_text.strip()
+    if not selected_text:
+        raise HTTPException(status_code=400, detail="Select text to explain.")
+    if len(selected_text) > 700:
+        raise HTTPException(status_code=400, detail="Selection is too long.")
+
+    try:
+        return await asyncio.to_thread(
+            answer_selection_explanation,
+            paper,
+            selected_text,
+            request.page_number,
+            request.page_text,
+            request.provider,
+            request.api_key,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.get("/api/search")
+async def search(query: str):
+    try:
+        results = await asyncio.to_thread(search_web, query, 8)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {"results": results}
