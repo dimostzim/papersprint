@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from .ai import analyze_paper, answer_chat, answer_selection_explanation, provider_status
+from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_status
 from .citations import extract_citations, ground_citation_rects
 from .figures import analyze_figures, figure_directory
 from .paper_processing import extract_pdf, file_digest, public_page_sizes, slugify, sort_highlights
@@ -25,20 +26,22 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 SESSION_DIR = DATA_DIR / "session"
+CACHE_DIR = DATA_DIR / "cache"
 PAPERS_DIR = SESSION_DIR / "papers"
 FIGURES_DIR = SESSION_DIR / "figures"
+CACHE_PAPERS_DIR = CACHE_DIR / "papers"
+CACHE_RECORDS_DIR = CACHE_DIR / "records"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
-DEFAULT_HIGHLIGHT_COUNT = 15
-MIN_HIGHLIGHT_COUNT = 1
-MAX_HIGHLIGHT_COUNT = 40
 
 shutil.rmtree(SESSION_DIR, ignore_errors=True)
 PAPERS_DIR.mkdir(parents=True, exist_ok=True)
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_PAPERS_DIR.mkdir(parents=True, exist_ok=True)
+CACHE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
 PAPERS: dict[str, dict[str, Any]] = {}
 
-app = FastAPI(title="Paper Reader AI")
+app = FastAPI(title="PaperSprint")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -65,7 +68,6 @@ class FigureAnalysisRequest(BaseModel):
 class AnalysisRequest(BaseModel):
     provider: str | None = "auto"
     api_key: str | None = None
-    highlight_count: int = DEFAULT_HIGHLIGHT_COUNT
 
 
 class SelectionExplainRequest(BaseModel):
@@ -87,13 +89,62 @@ def write_paper(paper: dict[str, Any]) -> None:
     PAPERS[paper["id"]] = paper
 
 
-def validate_highlight_count(highlight_count: int) -> int:
-    if not MIN_HIGHLIGHT_COUNT <= highlight_count <= MAX_HIGHLIGHT_COUNT:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Choose between {MIN_HIGHLIGHT_COUNT} and {MAX_HIGHLIGHT_COUNT} highlights.",
-        )
-    return highlight_count
+def cache_record_path(digest: str) -> Path:
+    return CACHE_RECORDS_DIR / f"{digest}.json"
+
+
+def cache_pdf_path(digest: str) -> Path:
+    return CACHE_PAPERS_DIR / f"{digest}.pdf"
+
+
+def cached_analysis(digest: str, paper_id: str, filename: str, stored_pdf: str) -> dict[str, Any] | None:
+    record_path = cache_record_path(digest)
+    source_pdf = cache_pdf_path(digest)
+    if not record_path.exists() or not source_pdf.exists():
+        return None
+
+    paper = json.loads(record_path.read_text(encoding="utf-8"))
+    if paper.get("analysis_version") != ANALYSIS_VERSION:
+        return None
+
+    paper.update(
+        {
+            "id": paper_id,
+            "filename": filename,
+            "stored_pdf": stored_pdf,
+            "figures": [],
+            "figure_warnings": [],
+            "figure_provider_used": "unknown",
+        }
+    )
+    shutil.copyfile(source_pdf, PAPERS_DIR / stored_pdf)
+    return paper
+
+
+def cache_paper(paper: dict[str, Any], pdf_path: Path) -> None:
+    digest = str(paper.get("digest", ""))
+    if not digest:
+        return
+
+    CACHE_PAPERS_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(pdf_path, cache_pdf_path(digest))
+    cached = dict(paper)
+    cached["figures"] = []
+    cached["figure_warnings"] = []
+    cached["figure_provider_used"] = "unknown"
+    cache_record_path(digest).write_text(json.dumps(cached), encoding="utf-8")
+
+
+def delete_cached_paper(digest: str, paper_id: str) -> None:
+    if digest:
+        cache_pdf_path(digest).unlink(missing_ok=True)
+        cache_record_path(digest).unlink(missing_ok=True)
+        return
+
+    for directory, suffix in ((CACHE_PAPERS_DIR, ".pdf"), (CACHE_RECORDS_DIR, ".json")):
+        for path in directory.glob(f"{paper_id}*{suffix}"):
+            path.unlink(missing_ok=True)
 
 
 def public_figures(paper_id: str, figures: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -119,7 +170,6 @@ def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[s
         "warnings": paper.get("warnings", []),
         "analysis_status": paper.get("analysis_status", "complete"),
         "analysis_error": paper.get("analysis_error", ""),
-        "highlight_target": paper.get("highlight_target", DEFAULT_HIGHLIGHT_COUNT),
         "highlight_count": len(highlights),
         "figure_count": len(paper.get("figures", [])),
         "citation_count": len(paper.get("citations", [])),
@@ -147,16 +197,18 @@ def build_paper_record(
     paper_id: str,
     filename: str,
     provider: str | None,
-    highlight_count: int,
+    digest: str,
     api_key: str | None = None,
 ) -> dict[str, Any]:
     extracted = extract_pdf(pdf_path)
     citations = ground_citation_rects(pdf_path, extract_citations(extracted))
-    analysis = analyze_paper(pdf_path, extracted, provider, highlight_count, api_key)
+    analysis = analyze_paper(pdf_path, extracted, provider, api_key)
     return {
         "id": paper_id,
         "filename": filename,
         "stored_pdf": pdf_path.name,
+        "digest": digest,
+        "analysis_version": ANALYSIS_VERSION,
         "title": analysis.get("title") or extracted.title,
         "overview": analysis.get("overview", ""),
         "key_takeaways": analysis.get("key_takeaways", []),
@@ -179,7 +231,6 @@ def build_paper_record(
             for span in extracted.sentence_spans
         ],
         "full_text_chars": len(extracted.full_text),
-        "highlight_target": highlight_count,
         "analysis_status": "complete",
         "analysis_error": "",
     }
@@ -189,6 +240,7 @@ def build_uploaded_paper_record(
     pdf_path: Path,
     paper_id: str,
     filename: str,
+    digest: str,
 ) -> dict[str, Any]:
     extracted = extract_pdf(pdf_path)
     citations = ground_citation_rects(pdf_path, extract_citations(extracted))
@@ -196,6 +248,8 @@ def build_uploaded_paper_record(
         "id": paper_id,
         "filename": filename,
         "stored_pdf": pdf_path.name,
+        "digest": digest,
+        "analysis_version": 0,
         "title": extracted.title or Path(filename).stem,
         "overview": "PDF loaded. Click Analyze to generate takeaways and highlights.",
         "key_takeaways": [],
@@ -218,7 +272,6 @@ def build_uploaded_paper_record(
             for span in extracted.sentence_spans
         ],
         "full_text_chars": len(extracted.full_text),
-        "highlight_target": DEFAULT_HIGHLIGHT_COUNT,
         "analysis_status": "ready",
         "analysis_error": "",
     }
@@ -229,11 +282,11 @@ def finish_paper_analysis(
     paper_id: str,
     filename: str,
     provider: str | None,
-    highlight_count: int,
+    digest: str,
     api_key: str | None = None,
 ) -> None:
     try:
-        paper = build_paper_record(pdf_path, paper_id, filename, provider, highlight_count, api_key)
+        paper = build_paper_record(pdf_path, paper_id, filename, provider, digest, api_key)
     except Exception as error:
         pending = PAPERS.get(paper_id)
         if pending:
@@ -248,6 +301,7 @@ def finish_paper_analysis(
     paper["figure_provider_used"] = existing.get("figure_provider_used", "unknown")
     paper["citations"] = existing.get("citations") or paper.get("citations", [])
     write_paper(paper)
+    cache_paper(paper, pdf_path)
 
 
 @app.get("/")
@@ -280,13 +334,22 @@ async def upload_paper(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
 
     digest = file_digest(data)
-    paper_id = f"{digest[:12]}-{len(PAPERS) + 1}"
+    paper_id = digest[:12]
     safe_name = f"{paper_id}-{slugify(Path(file.filename).stem)}.pdf"
     pdf_path = PAPERS_DIR / safe_name
+
+    if paper_id in PAPERS and pdf_path.exists():
+        return public_paper(PAPERS[paper_id], include_details=True)
+
+    cached = cached_analysis(digest, paper_id, file.filename, safe_name)
+    if cached:
+        write_paper(cached)
+        return public_paper(cached, include_details=True)
+
     pdf_path.write_bytes(data)
 
     try:
-        paper = build_uploaded_paper_record(pdf_path, paper_id, file.filename)
+        paper = build_uploaded_paper_record(pdf_path, paper_id, file.filename, digest)
     except fitz.FileDataError as error:
         pdf_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is not a readable PDF.") from error
@@ -301,12 +364,17 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
     provider = request.provider or "auto"
     if provider not in {"auto", "codex", "openai"}:
         raise HTTPException(status_code=502, detail="The local fallback provider has been removed.")
-    highlight_count = validate_highlight_count(request.highlight_count)
     pdf_path = PAPERS_DIR / paper["stored_pdf"]
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
 
     if paper.get("analysis_status") == "analyzing":
+        return public_paper(paper, include_details=True)
+    if (
+        paper.get("analysis_status") == "complete"
+        and paper.get("highlights")
+        and paper.get("analysis_version") == ANALYSIS_VERSION
+    ):
         return public_paper(paper, include_details=True)
 
     paper.update(
@@ -319,7 +387,6 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
             "questions": [],
             "provider_used": "pending",
             "warnings": [],
-            "highlight_target": highlight_count,
             "analysis_status": "analyzing",
             "analysis_error": "",
         }
@@ -333,7 +400,7 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
             paper_id,
             paper["filename"],
             provider,
-            highlight_count,
+            paper.get("digest", ""),
             request.api_key,
         )
     )
@@ -343,6 +410,20 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
 @app.get("/api/papers/{paper_id}")
 def get_paper(paper_id: str):
     return public_paper(read_paper(paper_id), include_details=True)
+
+
+@app.delete("/api/papers/{paper_id}")
+def delete_paper(paper_id: str):
+    paper = PAPERS.pop(paper_id, None)
+    if not paper:
+        delete_cached_paper("", paper_id)
+        shutil.rmtree(figure_directory(FIGURES_DIR, paper_id), ignore_errors=True)
+        return {"deleted": False}
+
+    (PAPERS_DIR / str(paper.get("stored_pdf", ""))).unlink(missing_ok=True)
+    delete_cached_paper(str(paper.get("digest", "")), paper_id)
+    shutil.rmtree(figure_directory(FIGURES_DIR, paper_id), ignore_errors=True)
+    return {"deleted": True}
 
 
 @app.get("/api/papers/{paper_id}/file")

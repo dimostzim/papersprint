@@ -131,6 +131,67 @@ def test_extract_citations_maps_two_author_mentions_to_contexts():
     assert citations[0]["contexts"][0]["marker"] == "Calin and Croce 2006"
 
 
+def test_extract_citations_uses_author_year_inline_markers_as_source_of_truth():
+    extracted = extracted_from_pages(
+        (
+            "Automated ML systems include Auto-sklearn (Feurer et al., 2015), "
+            "AutoGluon (Erickson et al., 2020), and TPOT (Olson and Moore, 2016)."
+        ),
+        (
+            "References\n"
+            "Feurer M, Klein A, Eggensperger K et al. Efficient and robust automated "
+            "machine learning. Advances in neural information processing systems 2015.\n"
+            "2024. This wrapped continuation looks numeric but is not a numbered reference.\n"
+            "Erickson N et al. AutoGluon-Tabular: Robust and accurate AutoML. arXiv 2020.\n"
+            "Olson RS, Moore JH. TPOT: A tree-based pipeline optimization tool. JMLR 2016."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == [
+        "Erickson et al. 2020",
+        "Feurer et al. 2015",
+        "Olson 2016",
+    ]
+    assert all(citation["resolved"] for citation in citations)
+    assert citations[0]["contexts"][0]["marker"] == "Erickson et al., 2020"
+    assert citations[1]["contexts"][0]["marker"] == "Feurer et al., 2015"
+    assert citations[2]["contexts"][0]["marker"] == "Olson and Moore, 2016"
+    assert "AutoGluon-Tabular" in citations[0]["raw_reference"]
+
+
+def test_extract_citations_keeps_unresolved_author_year_inline_markers():
+    extracted = extracted_from_pages(
+        "AutoML tools can be brittle in biomedical settings (Feurer et al., 2015)."
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "Feurer et al. 2015"
+    assert citations[0]["resolved"] is False
+    assert citations[0]["raw_reference"] == ""
+    assert citations[0]["contexts"][0]["marker"] == "Feurer et al., 2015"
+
+
+def test_ground_citation_rects_handles_author_year_markers(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=200)
+    page.insert_text((40, 60), "AutoML tools include Auto-sklearn (Feurer et al., 2015).")
+    doc.save(pdf_path)
+    doc.close()
+
+    extracted = extracted_from_pages(
+        "AutoML tools include Auto-sklearn (Feurer et al., 2015).",
+        "References\nFeurer M et al. Efficient and robust automated machine learning. NeurIPS 2015.",
+    )
+
+    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
+
+    assert citations[0]["contexts"][0]["rects"]
+
+
 def test_ground_citation_rects_uses_spacing_variants(tmp_path):
     pdf_path = tmp_path / "paper.pdf"
     doc = fitz.open()

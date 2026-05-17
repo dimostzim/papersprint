@@ -73,12 +73,31 @@ function setStatus(message, pill = "Figures") {
   }
 }
 
+function setLoadingButton(button, isLoading, label) {
+  if (!button) {
+    return;
+  }
+  button.classList.toggle("is-loading", isLoading);
+  button.setAttribute("aria-busy", isLoading ? "true" : "false");
+  const labelNode = button.querySelector(".button-label");
+  if (labelNode) {
+    labelNode.textContent = label;
+  } else {
+    button.textContent = label;
+  }
+}
+
 function syncButton() {
   if (!els.reanalyzeButton) {
     return;
   }
   els.reanalyzeButton.disabled = state.running || !state.paperId || !state.paper;
-  els.reanalyzeButton.textContent = state.figures.length ? "Reanalyze" : "Analyze";
+  const label = state.running
+    ? "Analyzing"
+    : state.figures.length
+      ? "Reanalyze"
+      : "Analyze";
+  setLoadingButton(els.reanalyzeButton, state.running, label);
 }
 
 function renderWarnings() {

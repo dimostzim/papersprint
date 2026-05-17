@@ -3,6 +3,15 @@ import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 
+const HIGHLIGHT_FACETS = [
+  { id: "all", label: "All" },
+  { id: "goal", label: "Goal" },
+  { id: "novelty", label: "Novelty" },
+  { id: "method", label: "Method" },
+  { id: "result", label: "Result" },
+  { id: "limitation", label: "Limitation" },
+];
+
 const state = {
   papers: [],
   selectedPaper: null,
@@ -15,6 +24,7 @@ const state = {
   activeSelection: null,
   activeCitation: null,
   pendingCitationContext: null,
+  activeHighlightFacet: "all",
 };
 
 const els = {
@@ -22,15 +32,18 @@ const els = {
   pdfInput: document.getElementById("pdf-input"),
   providerSelect: document.getElementById("provider-select"),
   apiKeyInput: document.getElementById("api-key-input"),
-  highlightCountInput: document.getElementById("highlight-count-input"),
+  analyzeButton: document.getElementById("analyze-button"),
   figuresButton: document.getElementById("figures-button"),
   providerStatus: document.getElementById("provider-status"),
   refreshButton: document.getElementById("refresh-button"),
   paperList: document.getElementById("paper-list"),
+  assistantPanel: document.querySelector(".assistant-panel"),
+  chatResizeHandle: document.getElementById("chat-resize-handle"),
   readerPanel: document.querySelector(".reader-panel"),
   readerEmpty: document.getElementById("reader-empty"),
   pdfViewer: document.getElementById("pdf-viewer"),
   highlightCount: document.getElementById("highlight-count"),
+  highlightFilters: document.getElementById("highlight-filters"),
   highlightList: document.getElementById("highlight-list"),
   paperProvider: document.getElementById("paper-provider"),
   paperTitle: document.getElementById("paper-title"),
@@ -43,7 +56,6 @@ const els = {
   selectionPopover: document.getElementById("selection-popover"),
   explainSelectionButton: document.getElementById("explain-selection-button"),
   citationPopover: document.getElementById("citation-popover"),
-  addCitationButton: document.getElementById("add-citation-button"),
   toast: document.getElementById("toast"),
 };
 
@@ -52,11 +64,6 @@ function escapeHtml(value = "") {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
-}
-
-function truncateText(value = "", limit = 220) {
-  const text = String(value).replace(/\s+/g, " ").trim();
-  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
 }
 
 function showToast(message, sticky = false) {
@@ -82,6 +89,83 @@ function setHtml(target, html) {
     return;
   }
   target.innerHTML = html;
+}
+
+function setLoadingButton(button, isLoading, label) {
+  if (!button) {
+    return;
+  }
+  button.classList.toggle("is-loading", isLoading);
+  button.setAttribute("aria-busy", isLoading ? "true" : "false");
+  const labelNode = button.querySelector(".button-label");
+  if (labelNode) {
+    labelNode.textContent = label;
+  } else {
+    button.textContent = label;
+  }
+}
+
+function resizeChatInput() {
+  if (!els.chatInput) {
+    return;
+  }
+
+  const style = window.getComputedStyle(els.chatInput);
+  const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.35 || 18;
+  const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+  const verticalBorder = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+  const maxHeight = Math.ceil(lineHeight * 5 + verticalPadding + verticalBorder);
+
+  els.chatInput.style.height = "auto";
+  els.chatInput.style.height = `${Math.min(els.chatInput.scrollHeight + verticalBorder, maxHeight)}px`;
+  els.chatInput.style.overflowY = els.chatInput.scrollHeight + verticalBorder > maxHeight ? "auto" : "hidden";
+}
+
+function setChatPanelSplit(clientY) {
+  if (!els.assistantPanel || !els.chatResizeHandle) {
+    return;
+  }
+
+  const panelRect = els.assistantPanel.getBoundingClientRect();
+  const handleHeight = els.chatResizeHandle.getBoundingClientRect().height || 8;
+  const minSummaryHeight = 130;
+  const minChatHeight = 180;
+  const maxSummaryHeight = Math.max(minSummaryHeight, panelRect.height - handleHeight - minChatHeight);
+  const nextSummaryHeight = Math.min(
+    maxSummaryHeight,
+    Math.max(minSummaryHeight, clientY - panelRect.top),
+  );
+  els.assistantPanel.style.setProperty("--summary-panel-height", `${Math.round(nextSummaryHeight)}px`);
+}
+
+function currentSummaryPanelHeight() {
+  const summaryPanel = els.assistantPanel?.querySelector(".summary-panel");
+  return summaryPanel?.getBoundingClientRect().height || 0;
+}
+
+function startChatPanelResize(event) {
+  if (!els.assistantPanel) {
+    return;
+  }
+
+  event.preventDefault();
+  els.assistantPanel.classList.add("is-resizing");
+  const pointerId = event.pointerId;
+  els.chatResizeHandle?.setPointerCapture?.(pointerId);
+  setChatPanelSplit(event.clientY);
+
+  const onPointerMove = (moveEvent) => {
+    setChatPanelSplit(moveEvent.clientY);
+  };
+  const onPointerUp = () => {
+    els.assistantPanel?.classList.remove("is-resizing");
+    els.chatResizeHandle?.releasePointerCapture?.(pointerId);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  };
+
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
 async function requestJson(url, options = {}) {
@@ -180,11 +264,16 @@ function renderPaperList() {
             ? "analysis failed"
             : `${paper.highlight_count || 0} highlights${citationText} · ${escapeHtml(paper.provider_used || "unknown")}`;
       return `
-        <button class="paper-card ${active}" data-paper-id="${paper.id}" type="button">
-          <strong>${escapeHtml(paper.title || paper.filename)}</strong>
-          <span>${statusText}</span>
+        <article class="paper-card ${active}">
+          <button class="paper-card-main" data-paper-id="${paper.id}" type="button">
+            <strong>${escapeHtml(paper.title || paper.filename)}</strong>
+            <span>${statusText}</span>
+          </button>
+          <button class="paper-remove-button" data-remove-paper-id="${paper.id}" title="Remove paper" type="button" aria-label="Remove paper">
+            ×
+          </button>
           ${warning}
-        </button>
+        </article>
       `;
       })
       .join(""),
@@ -192,6 +281,12 @@ function renderPaperList() {
 
   els.paperList?.querySelectorAll("[data-paper-id]").forEach((button) => {
     button.addEventListener("click", () => selectPaper(button.dataset.paperId));
+  });
+  els.paperList?.querySelectorAll("[data-remove-paper-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      removePaper(button.dataset.removePaperId).catch((error) => showToast(error.message || String(error)));
+    });
   });
 }
 
@@ -220,10 +315,29 @@ async function selectPaper(paperId) {
   pollPaperAnalysis(paper.id);
 }
 
+async function removePaper(paperId) {
+  if (!paperId) {
+    return;
+  }
+
+  await requestJson(`/api/papers/${paperId}`, { method: "DELETE" });
+  state.papers = state.papers.filter((paper) => paper.id !== paperId);
+  if (state.selectedPaper?.id === paperId) {
+    clearSelectedPaper();
+    if (state.papers.length) {
+      await selectPaper(state.papers[0].id);
+    }
+  } else {
+    renderPaperList();
+  }
+  showToast("Paper removed");
+}
+
 function setSelectedPaper(paper) {
   state.selectedPaper = paper;
   state.chatMessages = [];
   state.pendingCitationContext = null;
+  state.activeHighlightFacet = "all";
   upsertPaperSummary(paper);
   syncPaperActions();
   renderPaperList();
@@ -236,6 +350,7 @@ function clearSelectedPaper() {
   state.chatMessages = [];
   state.pageTexts = new Map();
   state.pendingCitationContext = null;
+  state.activeHighlightFacet = "all";
   hideSelectionPopover();
   hideCitationPopover();
   if (state.analysisPoll) {
@@ -250,7 +365,7 @@ function clearSelectedPaper() {
     els.paperProvider.textContent = "Idle";
   }
   if (els.paperTitle) {
-    els.paperTitle.textContent = "Paper Reader AI";
+    els.paperTitle.textContent = "PaperSprint";
   }
   if (els.paperOverview) {
     els.paperOverview.textContent = "";
@@ -259,11 +374,17 @@ function clearSelectedPaper() {
     els.highlightCount.textContent = "0";
   }
   setHtml(els.highlightList, `<div class="muted-box">No highlights</div>`);
+  renderHighlightFilters([]);
   renderListPanel(els.takeawaysTab, []);
   renderChat();
 }
 
 function syncPaperActions() {
+  const isAnalyzing = state.selectedPaper?.analysis_status === "analyzing";
+  setLoadingButton(els.analyzeButton, Boolean(isAnalyzing), isAnalyzing ? "Analyzing" : "Analyze");
+  if (els.analyzeButton) {
+    els.analyzeButton.disabled = Boolean(isAnalyzing);
+  }
   if (els.figuresButton) {
     els.figuresButton.disabled = !state.selectedPaper;
   }
@@ -285,8 +406,12 @@ function renderPaperDetails(paper) {
   if (els.paperOverview) {
     els.paperOverview.textContent = paper.overview || "";
   }
+  const highlights = paper.highlights || [];
+  const visibleHighlights = filteredHighlights(highlights);
   if (els.highlightCount) {
-    els.highlightCount.textContent = String(paper.highlights?.length || 0);
+    els.highlightCount.textContent = state.activeHighlightFacet === "all"
+      ? String(highlights.length)
+      : `${visibleHighlights.length}/${highlights.length}`;
   }
   if (paper.analysis_status === "analyzing") {
     renderListPanel(els.takeawaysTab, ["Analysis is running. The PDF is ready to read now."]);
@@ -297,7 +422,50 @@ function renderPaperDetails(paper) {
   } else {
     renderListPanel(els.takeawaysTab, paper.key_takeaways || []);
   }
-  renderHighlights(paper.highlights || []);
+  renderHighlightFilters(highlights);
+  renderHighlights(visibleHighlights);
+}
+
+function filteredHighlights(highlights) {
+  return (highlights || [])
+    .map((highlight, index) => ({ ...highlight, highlightIndex: index }))
+    .filter((highlight) => state.activeHighlightFacet === "all" || highlight.label === state.activeHighlightFacet);
+}
+
+function renderHighlightFilters(highlights) {
+  if (!els.highlightFilters) {
+    return;
+  }
+
+  const counts = new Map();
+  for (const highlight of highlights || []) {
+    counts.set(highlight.label, (counts.get(highlight.label) || 0) + 1);
+  }
+
+  setHtml(
+    els.highlightFilters,
+    HIGHLIGHT_FACETS.map((facet) => {
+      const count = facet.id === "all" ? (highlights || []).length : counts.get(facet.id) || 0;
+      const active = state.activeHighlightFacet === facet.id ? "active" : "";
+      return `
+        <button class="facet-chip ${active}" data-highlight-facet="${facet.id}" type="button">
+          ${escapeHtml(facet.label)}
+          <span>${count}</span>
+        </button>
+      `;
+    }).join(""),
+  );
+
+  els.highlightFilters.querySelectorAll("[data-highlight-facet]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.activeHighlightFacet = button.dataset.highlightFacet || "all";
+      if (!state.selectedPaper) {
+        return;
+      }
+      renderPaperDetails(state.selectedPaper);
+      await renderPdfPreservingScroll(state.selectedPaper);
+    });
+  });
 }
 
 function renderListPanel(target, items) {
@@ -320,8 +488,9 @@ function renderHighlights(highlights) {
     highlights
       .map((highlight, index) => {
       const page = highlight.page_number ? `p. ${highlight.page_number}` : "unplaced";
+      const highlightIndex = highlight.highlightIndex ?? index;
       return `
-        <button class="highlight-card" data-highlight-index="${index}" type="button">
+        <button class="highlight-card" data-highlight-index="${highlightIndex}" type="button">
           <span class="label label-${escapeHtml(highlight.label)}">${escapeHtml(highlight.label)}</span>
           <strong>${escapeHtml(highlight.snippet)}</strong>
           <small>${escapeHtml(page)} · ${escapeHtml(highlight.reason || "")}</small>
@@ -333,7 +502,9 @@ function renderHighlights(highlights) {
 
   els.highlightList?.querySelectorAll("[data-highlight-index]").forEach((button) => {
     button.addEventListener("click", () => {
-      const highlight = highlights[Number(button.dataset.highlightIndex)];
+      const highlightIndex = Number(button.dataset.highlightIndex);
+      const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
+      selectHighlight(highlightIndex);
       if (highlight?.page_number) {
         jumpToPage(highlight.page_number);
       }
@@ -341,11 +512,34 @@ function renderHighlights(highlights) {
   });
 }
 
-function citationChatPrefix(citation) {
-  const title = truncateText(citation.title || citation.raw_reference || "", 140);
-  return title
-    ? `Regarding citation ${citation.label || ""}: ${title} — `
-    : `Regarding citation ${citation.label || "this citation"} — `;
+function normalizeCitationReference(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function citationChatText(citation) {
+  const rawReferences = Array.isArray(citation.raw_references)
+    ? citation.raw_references.map(normalizeCitationReference).filter(Boolean)
+    : [normalizeCitationReference(citation.raw_reference)].filter(Boolean);
+  if (rawReferences.length) {
+    return rawReferences.join("\n");
+  }
+
+  const parts = [
+    citation.authors,
+    citation.title,
+    citation.year,
+  ]
+    .map(normalizeCitationReference)
+    .filter(Boolean);
+  if (parts.length) {
+    return parts.join(". ");
+  }
+
+  const context = citation.contexts?.[0]?.sentence || "";
+  return [citation.label, context]
+    .map((value) => String(value || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 function addCitationToChat(citation) {
@@ -354,10 +548,11 @@ function addCitationToChat(citation) {
   }
 
   state.pendingCitationContext = citation;
-  const prefix = citationChatPrefix(citation);
-  if (!els.chatInput.value.includes(prefix)) {
-    els.chatInput.value = `${prefix}${els.chatInput.value}`.trimEnd();
+  const citationText = citationChatText(citation);
+  if (citationText && !els.chatInput.value.includes(citationText)) {
+    els.chatInput.value = [els.chatInput.value.trim(), citationText].filter(Boolean).join("\n");
   }
+  resizeChatInput();
   els.chatInput.focus();
   showToast("Citation added to chat");
 }
@@ -375,6 +570,114 @@ function citationsByPage(citations) {
     }
   }
   return map;
+}
+
+function citationRectKey(rect) {
+  return (rect || []).map((value) => Number(value).toFixed(2)).join(",");
+}
+
+function citationGroupLabel(item) {
+  return normalizeCitationReference(item.context?.marker || item.citation?.label || "Citation");
+}
+
+function groupedCitationRects(citations) {
+  const groups = new Map();
+  for (const item of citations) {
+    for (const rect of item.context.rects || []) {
+      const label = citationGroupLabel(item);
+      const key = `${item.context.page_number || ""}|${label}|${citationRectKey(rect)}`;
+      if (!groups.has(key)) {
+        groups.set(key, { label, rect, items: [] });
+      }
+      groups.get(key).items.push(item);
+    }
+  }
+  return Array.from(groups.values());
+}
+
+function uniqueValues(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const normalized = normalizeCitationReference(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function uniqueCitationItems(items) {
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    const citation = item.citation || {};
+    const key = normalizeCitationReference(citation.id || citation.raw_reference || citation.label || citation.title);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
+function citationContextKey(context) {
+  return [
+    context.page_number || "",
+    context.marker || "",
+    normalizeCitationReference(context.sentence || ""),
+  ].join("|");
+}
+
+function citationChoiceTitle(citation) {
+  return normalizeCitationReference(citation.raw_reference || citation.title || citation.label || "Citation");
+}
+
+function citationChoiceMeta(citation) {
+  return [
+    citation.label,
+    citation.year,
+  ]
+    .map(normalizeCitationReference)
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function citationForGroup(group) {
+  const uniqueItems = uniqueCitationItems(group.items);
+  if (uniqueItems.length === 1) {
+    return uniqueItems[0].citation;
+  }
+
+  const firstCitation = uniqueItems[0]?.citation || {};
+  const references = uniqueValues(uniqueItems.map((item) => item.citation?.raw_reference || ""));
+  const titles = uniqueValues(uniqueItems.map((item) => item.citation?.title || ""));
+  const contexts = [];
+  const seenContexts = new Set();
+  for (const item of group.items) {
+    const key = citationContextKey(item.context);
+    if (!seenContexts.has(key)) {
+      seenContexts.add(key);
+      contexts.push(item.context);
+    }
+  }
+
+  return {
+    ...firstCitation,
+    id: `citation-group-${group.label}-${references.join("|")}`,
+    label: group.label,
+    title: titles.length ? `${group.label} (${titles.length} references)` : group.label,
+    authors: "",
+    year: "",
+    raw_reference: references.join("\n"),
+    raw_references: references,
+    grouped_citations: uniqueItems.map((item) => item.citation),
+    contexts,
+    resolved: uniqueItems.every((item) => item.citation?.resolved),
+  };
 }
 
 function selectHighlight(highlightIndex) {
@@ -403,7 +706,7 @@ function highlightsByPage(highlights) {
       continue;
     }
     const pageHighlights = map.get(highlight.page_number) || [];
-    pageHighlights.push({ ...highlight, highlightIndex: index });
+    pageHighlights.push({ ...highlight, highlightIndex: highlight.highlightIndex ?? index });
     map.set(highlight.page_number, pageHighlights);
   }
   return map;
@@ -419,7 +722,7 @@ async function renderPdf(paper) {
   setHtml(els.pdfViewer, `<div class="loading">Rendering PDF</div>`);
 
   const pdfDoc = await pdfjsLib.getDocument(`/api/papers/${paper.id}/file`).promise;
-  const pageHighlights = highlightsByPage(paper.highlights);
+  const pageHighlights = highlightsByPage(filteredHighlights(paper.highlights || []));
   const pageCitations = citationsByPage(paper.citations);
   const pageSizes = new Map((paper.page_sizes || []).map((page) => [page.page_number, page]));
   setHtml(els.pdfViewer, "");
@@ -523,23 +826,25 @@ function renderPageCitations(overlay, citations, pageSize, viewport) {
 
   const scaleX = viewport.width / pageSize.width;
   const scaleY = viewport.height / pageSize.height;
-  for (const item of citations) {
-    for (const rect of item.context.rects || []) {
-      const [x0, y0, x1, y1] = rect;
-      const node = document.createElement("button");
-      node.className = "citation-rect";
-      node.type = "button";
-      node.title = `${item.citation.label || "Citation"}: ${item.citation.title || ""}`;
-      node.style.left = `${x0 * scaleX}px`;
-      node.style.top = `${y0 * scaleY}px`;
-      node.style.width = `${Math.max(8, (x1 - x0) * scaleX)}px`;
-      node.style.height = `${Math.max(8, (y1 - y0) * scaleY)}px`;
-      node.addEventListener("click", (event) => {
-        event.stopPropagation();
-        showCitationPopover(item.citation, node.getBoundingClientRect());
-      });
-      overlay.appendChild(node);
-    }
+  for (const group of groupedCitationRects(citations)) {
+    const [x0, y0, x1, y1] = group.rect;
+    const citation = citationForGroup(group);
+    const referenceCount = citation.grouped_citations?.length || 1;
+    const node = document.createElement("button");
+    node.className = "citation-rect";
+    node.type = "button";
+    node.title = referenceCount > 1
+      ? `${group.label}: ${referenceCount} references`
+      : `${citation.label || "Citation"}: ${citation.title || ""}`;
+    node.style.left = `${x0 * scaleX}px`;
+    node.style.top = `${y0 * scaleY}px`;
+    node.style.width = `${Math.max(8, (x1 - x0) * scaleX)}px`;
+    node.style.height = `${Math.max(8, (y1 - y0) * scaleY)}px`;
+    node.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showCitationPopover(citation, node.getBoundingClientRect());
+    });
+    overlay.appendChild(node);
   }
 }
 
@@ -604,7 +909,6 @@ async function startSelectedPaperAnalysis(event) {
     body: JSON.stringify({
       provider: selectedProvider(),
       api_key: requestApiKey() || null,
-      highlight_count: Number(els.highlightCountInput?.value || 15),
     }),
   });
   setSelectedPaper(paper);
@@ -628,11 +932,12 @@ function pollPaperAnalysis(paperId) {
       if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
         return;
       }
-      state.selectedPaper = paper;
-      upsertPaperSummary(paper);
-      renderPaperList();
-      renderPaperDetails(paper);
-      if (paper.analysis_status === "analyzing") {
+  state.selectedPaper = paper;
+  upsertPaperSummary(paper);
+  renderPaperList();
+  renderPaperDetails(paper);
+  syncPaperActions();
+  if (paper.analysis_status === "analyzing") {
         pollPaperAnalysis(paperId);
       } else if (paper.analysis_status === "complete") {
         await renderPdfPreservingScroll(paper);
@@ -774,6 +1079,26 @@ function hideSelectionPopover() {
   els.selectionPopover?.classList.add("hidden");
 }
 
+function renderCitationPopover(citation) {
+  const choices = citation.grouped_citations?.length ? citation.grouped_citations : [citation];
+
+  setHtml(
+    els.citationPopover,
+    `
+      <div class="citation-choice-list">
+        ${choices
+          .map((choice, index) => `
+            <button class="citation-choice" data-citation-choice="${index}" type="button">
+              <span>${escapeHtml(citationChoiceMeta(choice))}</span>
+              <strong>${escapeHtml(citationChoiceTitle(choice))}</strong>
+            </button>
+          `)
+          .join("")}
+      </div>
+    `,
+  );
+}
+
 function showCitationPopover(citation, rect) {
   if (!citation || !els.citationPopover) {
     hideCitationPopover();
@@ -782,6 +1107,7 @@ function showCitationPopover(citation, rect) {
 
   hideSelectionPopover();
   state.activeCitation = citation;
+  renderCitationPopover(citation);
   const popover = els.citationPopover;
   popover.classList.remove("hidden");
   const top = Math.max(8, rect.top - popover.offsetHeight - 8);
@@ -855,6 +1181,7 @@ async function sendChatMessage(content, forceWeb = false, citationContext = null
   renderChat();
   if (els.chatInput) {
     els.chatInput.value = "";
+    resizeChatInput();
   }
 
   const pending = { role: "assistant", content: "Thinking..." };
@@ -866,7 +1193,7 @@ async function sendChatMessage(content, forceWeb = false, citationContext = null
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       messages: state.chatMessages.filter((message) => message.content !== "Thinking..."),
-      use_web: citationContext ? Boolean(forceWeb) : forceWeb || els.webToggle.checked,
+      use_web: forceWeb || Boolean(els.webToggle?.checked),
       provider: selectedProvider(),
       api_key: requestApiKey() || null,
       citation_context: citationContext,
@@ -940,9 +1267,15 @@ els.citationPopover?.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
-els.addCitationButton?.addEventListener("click", () => {
-  addCitationToChat(state.activeCitation);
-  hideCitationPopover();
+els.citationPopover?.addEventListener("click", (event) => {
+  const choiceButton = event.target.closest?.("[data-citation-choice]");
+  if (choiceButton) {
+    const choices = state.activeCitation?.grouped_citations?.length
+      ? state.activeCitation.grouped_citations
+      : [state.activeCitation];
+    addCitationToChat(choices[Number(choiceButton.dataset.citationChoice)]);
+    hideCitationPopover();
+  }
 });
 
 els.refreshButton?.addEventListener("click", () => {
@@ -963,6 +1296,21 @@ els.chatForm?.addEventListener("submit", (event) => {
     state.chatMessages.push({ role: "assistant", content: error.message || String(error) });
     renderChat();
   });
+});
+
+els.chatInput?.addEventListener("input", resizeChatInput);
+resizeChatInput();
+
+els.chatResizeHandle?.addEventListener("pointerdown", startChatPanelResize);
+els.chatResizeHandle?.addEventListener("keydown", (event) => {
+  if (!["ArrowUp", "ArrowDown"].includes(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+  const direction = event.key === "ArrowUp" ? -1 : 1;
+  const panelTop = els.assistantPanel?.getBoundingClientRect().top || 0;
+  setChatPanelSplit(panelTop + currentSummaryPanelHeight() + direction * 24);
 });
 
 loadSettings()

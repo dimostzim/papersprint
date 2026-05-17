@@ -3,22 +3,28 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Figures - Paper Reader AI</title>
-    <link rel="stylesheet" href="/static/styles.css?v=13" />
+    <title>Figures - PaperSprint</title>
+    <link rel="stylesheet" href="/static/styles.css?v=21" />
   </head>
   <body class="figures-body" data-paper-id="{{ paper_id }}">
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark">PR</span>
+        <span class="brand-mark">PS</span>
         <div>
-          <strong>Paper Reader AI</strong>
+          <strong>PaperSprint</strong>
           <span id="figures-provider">Figures</span>
         </div>
       </div>
 
       <div class="figure-page-actions">
         <a class="button-link" href="/">Reader</a>
-        <button id="reanalyze-figures-button" type="button" disabled>Analyze</button>
+        <button id="reanalyze-figures-button" class="loading-button" type="button" disabled>
+          <span class="button-spinner" aria-hidden="true"></span>
+          <span class="button-label">Analyze</span>
+        </button>
+        <button id="theme-toggle" class="icon-button" title="Toggle dark mode" type="button" aria-label="Toggle dark mode">
+          ☾
+        </button>
       </div>
     </header>
 
@@ -36,6 +42,7 @@
     </main>
 
     <div id="toast" class="toast hidden"></div>
-    <script type="module" src="/static/figures.js?v=13"></script>
+    <script type="module" src="/static/theme.js?v=14"></script>
+    <script type="module" src="/static/figures.js?v=14"></script>
   </body>
 </html>

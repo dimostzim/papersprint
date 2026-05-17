@@ -16,6 +16,12 @@ from .paper_processing import ExtractedPaper, ground_highlights, normalize_text,
 
 load_dotenv()
 
+MAX_ANALYSIS_HIGHLIGHTS = 40
+MAX_HIGHLIGHT_SNIPPET_CHARS = 900
+ANALYSIS_VERSION = 6
+ABSTRACT_END_RE = re.compile(r"(?:^|\n)\s*(?:\d+\s*\.?\s*)?introduction\b", re.IGNORECASE)
+REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
+
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
 Return valid JSON only. Highlight snippets must be exact short excerpts copied from the paper text whenever possible.
 Do not invent claims that are not supported by the provided paper text.
@@ -78,8 +84,8 @@ def choose_provider(requested: str | None, api_key: str | None = None) -> str:
     return provider
 
 
-def build_analysis_prompt(extracted: ExtractedPaper, highlight_count: int = 15) -> str:
-    text = sanitize_prompt_text(extracted.full_text)[:70000]
+def build_analysis_prompt(extracted: ExtractedPaper) -> str:
+    text = format_guided_reading_text(extracted)[:70000]
     return f"""
 {ANALYSIS_SYSTEM}
 
@@ -94,8 +100,8 @@ Return JSON with exactly this shape:
   "glossary": [{{"term": "term or acronym", "definition": "short paper-specific definition"}}],
   "highlights": [
     {{
-      "label": "goal|method|result|limitation|definition|important",
-      "snippet": "exact excerpt from the paper under 260 characters",
+      "label": "goal|novelty|method|result|limitation",
+      "snippet": "one complete sentence copied exactly from the paper text, usually 90-260 characters",
       "reason": "why this excerpt helps fast comprehension"
     }}
   ],
@@ -103,18 +109,83 @@ Return JSON with exactly this shape:
 }}
 
 Highlight requirements:
-- Return exactly {highlight_count} highlights.
-- Spread them across the paper when possible.
-- Prefer passages that define the task, name the failure mode, introduce the intervention, explain the mechanism, define the evaluation/baseline/metric, report the main result, state a tradeoff, or limit the claim.
+- Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
+- Add a highlight only if it changes the reader's understanding of the task, novelty, method, evidence, or claim limitation.
+- Choose highlights from the paper body text below, not from the abstract.
+- Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, and limits when they exist.
+- If a claim appears in both the abstract and the body, choose the body sentence.
+- Do not highlight title, author, affiliation, contact, availability, license, preprint, or header/footer text.
+- Do not cluster the set in the opening motivation; later method, evaluation, result, and this-paper limitation passages are usually more useful.
+- Use the goal label for the task, problem statement, or motivating failure mode that this paper addresses.
+- Use the novelty label for contribution claims: new systems, datasets, benchmarks, architectures, workflows, evaluation framing, or claimed differences from prior work.
+- Use the method label for this paper's data construction, model, system, protocol, evaluation design, or analysis procedure.
+- Use the result label for this paper's findings, measured evidence, comparisons, rankings, or empirical interpretations.
+- Use the limitation label only for limitations of this paper's own data, method, evaluation, assumptions, claims, or generalizability. Do not label weaknesses of prior work or background motivation as limitation; label those as goal when they define the problem.
+- Prefer a balanced guided skim across goal, novelty, method, result, and limitation when those facets are present, but do not force equal counts or invent missing facets.
+- Stop when the next highlight repeats an idea already covered.
+- Highlights must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
+- Avoid adjacent highlights unless they serve different labels.
+- Spread highlights across introduction, methods/system, evaluation/results, and limitations/discussion when those sections exist.
+- Prefer passages that define the task, name the paper's motivating failure mode, introduce this paper's intervention, explain the mechanism, define the evaluation/baseline/metric, report the main result, state a tradeoff, or bound this paper's claim.
 - Avoid generic field-motivation sentences unless they create a concrete methodological decision.
 - Read-this-first items should help a researcher triage the paper: task, method, evidence, limitations, and claim ceiling.
-- Snippets must be exact text copied from the paper text where possible.
+- Snippets must be exact complete sentences copied from the paper text where possible. Do not include page markers such as [Page 2]. Never end a snippet mid-word or mid-sentence.
 
 Paper title guess: {extracted.title}
 
-Paper text:
+Paper body text:
 {text}
 """.strip()
+
+
+def format_analysis_text(extracted: ExtractedPaper) -> str:
+    if not extracted.pages:
+        return sanitize_prompt_text(extracted.full_text)
+
+    parts = []
+    for page in extracted.pages:
+        page_number = int(page.get("page_number", len(parts) + 1))
+        text = sanitize_prompt_text(str(page.get("text", ""))).strip()
+        if text:
+            parts.append(f"[Page {page_number}]\n{text}")
+    return "\n\n".join(parts)
+
+
+def format_guided_reading_text(extracted: ExtractedPaper) -> str:
+    if not extracted.pages:
+        return sanitize_prompt_text(extracted.full_text)
+
+    parts = []
+    for page in extracted.pages:
+        page_number = int(page.get("page_number", len(parts) + 1))
+        text = sanitize_prompt_text(str(page.get("text", ""))).strip()
+        if page_number == 1:
+            text = first_page_body_text(text)
+
+        text, found_references = without_reference_section(text)
+        text = normalize_text(text)
+        if text:
+            parts.append(f"[Page {page_number}]\n{text}")
+        if found_references:
+            break
+
+    return "\n\n".join(parts) or format_analysis_text(extracted)
+
+
+def first_page_body_text(text: str) -> str:
+    intro_match = ABSTRACT_END_RE.search(text)
+    if intro_match:
+        return text[intro_match.start() :]
+    if re.search(r"\babstract\b", text, flags=re.IGNORECASE):
+        return ""
+    return text
+
+
+def without_reference_section(text: str) -> tuple[str, bool]:
+    match = REFERENCES_START_RE.search(text)
+    if not match:
+        return text, False
+    return text[: match.start()], True
 
 
 def parse_json_payload(text: str) -> dict[str, Any]:
@@ -268,7 +339,21 @@ def choose_vision_provider(requested: str | None, api_key: str | None = None) ->
     raise RuntimeError(f"Unknown AI provider: {provider}")
 
 
-def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper, highlight_count: int = 15) -> dict[str, Any]:
+def normalize_highlight_snippet(value: str) -> str:
+    snippet = normalize_text(str(value))
+    if len(snippet) <= MAX_HIGHLIGHT_SNIPPET_CHARS:
+        return snippet
+
+    window = snippet[: MAX_HIGHLIGHT_SNIPPET_CHARS + 1]
+    sentence_ends = [window.rfind(marker) for marker in (".", "?", "!")]
+    sentence_end = max(sentence_ends)
+    if sentence_end >= 40:
+        return window[: sentence_end + 1].strip()
+
+    return window.rsplit(" ", 1)[0].rstrip(",;:") or window.strip()
+
+
+def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> dict[str, Any]:
     def list_of_strings(key: str, limit: int) -> list[str]:
         values = payload.get(key, [])
         if not isinstance(values, list):
@@ -283,6 +368,16 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper, highl
     if not isinstance(highlights, list):
         highlights = []
 
+    normalized_highlights = [
+        {
+            "label": str(item.get("label", "important")),
+            "snippet": normalize_highlight_snippet(str(item.get("snippet", ""))),
+            "reason": normalize_text(str(item.get("reason", "")))[:500],
+        }
+        for item in highlights[:MAX_ANALYSIS_HIGHLIGHTS]
+        if isinstance(item, dict) and item.get("snippet")
+    ]
+
     return {
         "title": normalize_text(str(payload.get("title") or extracted.title))[:220],
         "overview": normalize_text(str(payload.get("overview") or "")),
@@ -296,35 +391,70 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper, highl
             for item in glossary[:10]
             if isinstance(item, dict) and item.get("term") and item.get("definition")
         ],
-        "highlights": [
-            {
-                "label": str(item.get("label", "important")),
-                "snippet": normalize_text(str(item.get("snippet", "")))[:320],
-                "reason": normalize_text(str(item.get("reason", "")))[:500],
-            }
-            for item in highlights[:highlight_count]
-            if isinstance(item, dict) and item.get("snippet")
-        ],
+        "highlights": limit_abstract_highlights(normalized_highlights, extracted),
         "questions": list_of_strings("questions", 8),
     }
+
+
+def abstract_region_text(extracted: ExtractedPaper) -> str:
+    source = ""
+    if extracted.pages:
+        source = str(extracted.pages[0].get("text", ""))
+    if not source:
+        source = extracted.full_text
+
+    match = re.search(r"\babstract\b", source, flags=re.IGNORECASE)
+    if not match:
+        return ""
+
+    remainder = source[match.end() :]
+    end_match = ABSTRACT_END_RE.search(remainder)
+    if end_match:
+        return normalize_text(remainder[: end_match.start()])
+    return normalize_text(remainder[:3000])
+
+
+def snippet_in_text(snippet: str, text: str) -> bool:
+    clean_snippet = normalize_text(snippet)
+    clean_text = normalize_text(text)
+    if not clean_snippet or not clean_text:
+        return False
+    if clean_snippet.lower() in clean_text.lower():
+        return True
+    return score_match(clean_snippet, clean_text) >= 0.82
+
+
+def limit_abstract_highlights(highlights: list[dict[str, Any]], extracted: ExtractedPaper) -> list[dict[str, Any]]:
+    abstract_text = abstract_region_text(extracted)
+    if not abstract_text:
+        return highlights
+
+    abstract_indexes = [
+        index for index, highlight in enumerate(highlights) if snippet_in_text(highlight.get("snippet", ""), abstract_text)
+    ]
+    if len(abstract_indexes) <= 1:
+        return highlights
+
+    priority = {"goal": 0, "novelty": 1, "method": 2, "result": 3, "limitation": 4}
+    keep_index = min(abstract_indexes, key=lambda index: priority.get(str(highlights[index].get("label", "")), 99))
+    return [highlight for index, highlight in enumerate(highlights) if index not in abstract_indexes or index == keep_index]
 
 
 def analyze_paper(
     pdf_path: Path,
     extracted: ExtractedPaper,
     provider: str | None,
-    highlight_count: int = 15,
     api_key: str | None = None,
 ) -> dict[str, Any]:
     selected_provider = choose_provider(provider, api_key)
     output, provider_used = run_ai(
-        build_analysis_prompt(extracted, highlight_count),
+        build_analysis_prompt(extracted),
         ANALYSIS_SYSTEM,
         selected_provider,
         True,
         api_key,
     )
-    analysis = normalize_analysis(parse_json_payload(output), extracted, highlight_count)
+    analysis = normalize_analysis(parse_json_payload(output), extracted)
 
     analysis["highlights"] = ground_highlights(pdf_path, analysis.get("highlights", []), extracted.sentence_spans)
     analysis["provider_used"] = provider_used

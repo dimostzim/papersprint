@@ -48,14 +48,88 @@ def split_sentences(text: str) -> list[str]:
     return [part.strip() for part in parts if len(part.strip()) >= 45]
 
 
-def union_rect(rects: list[list[float]]) -> list[list[float]]:
+def word_key(value: str) -> str:
+    return re.sub(r"[^\w]+", "", value.casefold(), flags=re.UNICODE)
+
+
+def phrase_word_keys(value: str) -> list[str]:
+    return [key for word in normalize_text(value).split() if (key := word_key(word))]
+
+
+def merge_word_rects(words: list[tuple[float, float, float, float, int, int, int]]) -> list[list[float]]:
+    if not words:
+        return []
+
+    lines: dict[tuple[int, int], list[tuple[float, float, float, float, int, int, int]]] = {}
+    for word in words:
+        lines.setdefault((word[4], word[5]), []).append(word)
+
+    rects: list[list[float]] = []
+    for line_words in sorted(lines.values(), key=lambda items: min((item[4], item[5], item[6]) for item in items)):
+        x0 = min(word[0] for word in line_words)
+        y0 = min(word[1] for word in line_words)
+        x1 = max(word[2] for word in line_words)
+        y1 = max(word[3] for word in line_words)
+        rects.append([round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)])
+    return rects
+
+
+def merge_rect_lines(rects: list[fitz.Rect]) -> list[list[float]]:
     if not rects:
         return []
-    x0 = min(rect[0] for rect in rects)
-    y0 = min(rect[1] for rect in rects)
-    x1 = max(rect[2] for rect in rects)
-    y1 = max(rect[3] for rect in rects)
-    return [[round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]]
+
+    sorted_rects = sorted(rects, key=lambda rect: (round((rect.y0 + rect.y1) / 2, 1), rect.x0))
+    lines: list[list[fitz.Rect]] = []
+    for rect in sorted_rects:
+        center_y = (rect.y0 + rect.y1) / 2
+        for line in lines:
+            line_center_y = sum((item.y0 + item.y1) / 2 for item in line) / len(line)
+            if abs(center_y - line_center_y) <= 3:
+                line.append(rect)
+                break
+        else:
+            lines.append([rect])
+
+    merged: list[list[float]] = []
+    for line in lines:
+        x0 = min(rect.x0 for rect in line)
+        y0 = min(rect.y0 for rect in line)
+        x1 = max(rect.x1 for rect in line)
+        y1 = max(rect.y1 for rect in line)
+        merged.append([round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)])
+    return merged
+
+
+def find_phrase_word_rects(page: fitz.Page, phrase: str) -> list[list[float]]:
+    phrase_keys = phrase_word_keys(phrase)
+    if not phrase_keys:
+        return []
+
+    page_words = sorted(page.get_text("words"), key=lambda word: (word[5], word[6], word[7]))
+    indexed_words: list[tuple[str, tuple[float, float, float, float, int, int, int]]] = []
+    for word in page_words:
+        key = word_key(str(word[4]))
+        if key:
+            indexed_words.append(
+                (
+                    key,
+                    (
+                        float(word[0]),
+                        float(word[1]),
+                        float(word[2]),
+                        float(word[3]),
+                        int(word[5]),
+                        int(word[6]),
+                        int(word[7]),
+                    ),
+                )
+            )
+
+    phrase_length = len(phrase_keys)
+    for start in range(0, len(indexed_words) - phrase_length + 1):
+        if [key for key, _ in indexed_words[start : start + phrase_length]] == phrase_keys:
+            return merge_word_rects([word for _, word in indexed_words[start : start + phrase_length]])
+    return []
 
 
 def choose_title(pdf_path: Path, doc: fitz.Document, full_text: str) -> str:
@@ -90,35 +164,19 @@ def extract_pdf(pdf_path: Path) -> ExtractedPaper:
 
     for page_index, page in enumerate(doc):
         page_number = page_index + 1
-        text_dict = page.get_text("dict")
-        page_text_parts: list[str] = []
+        page_text = extract_page_text(page)
 
-        for block in text_dict.get("blocks", []):
-            if block.get("type") != 0:
+        for block in page.get_text("blocks"):
+            if len(block) >= 7 and block[6] != 0:
                 continue
-
-            span_texts: list[str] = []
-            span_rects: list[list[float]] = []
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = normalize_text(span.get("text", ""))
-                    if not text:
-                        continue
-                    bbox = span.get("bbox", [0, 0, 0, 0])
-                    span_texts.append(text)
-                    span_rects.append([round(float(value), 2) for value in bbox])
-
-            block_text = normalize_text(" ".join(span_texts))
+            block_text = normalize_text(clean_pdf_text(block[4]))
             if not block_text:
                 continue
 
-            page_text_parts.append(block_text)
-            block_rect = union_rect(span_rects)
+            block_rect = [[round(float(value), 2) for value in block[:4]]]
             for sentence in split_sentences(block_text):
-                sentence_spans.append(SentenceSpan(sentence, page_number, block_rect))
+                sentence_spans.append(SentenceSpan(sentence, page_number, find_phrase_word_rects(page, sentence) or block_rect))
 
-        block_page_text = "\n".join(page_text_parts)
-        page_text = extract_page_text(page) or block_page_text
         full_text_parts.append(page_text)
         pages.append(
             {
@@ -187,13 +245,18 @@ def find_exact_rects(pdf_path: Path, snippet: str) -> tuple[int | None, list[lis
     doc = fitz.open(pdf_path)
     try:
         for page_index, page in enumerate(doc):
+            full_rects = find_phrase_word_rects(page, snippet)
+            if full_rects:
+                return page_index + 1, full_rects
+
             for phrase in phrases:
+                word_rects = find_phrase_word_rects(page, phrase)
+                if word_rects:
+                    return page_index + 1, word_rects
+
                 rects = page.search_for(phrase)
                 if rects:
-                    return page_index + 1, [
-                        [round(rect.x0, 2), round(rect.y0, 2), round(rect.x1, 2), round(rect.y1, 2)]
-                        for rect in rects[:10]
-                    ]
+                    return page_index + 1, merge_rect_lines(rects[:24])
     finally:
         doc.close()
 
@@ -256,18 +319,27 @@ def sanitize_label(label: str) -> str:
     normalized = re.sub(r"[^a-z]+", "", label.lower())
     aliases = {
         "objective": "goal",
-        "contribution": "goal",
+        "task": "goal",
+        "problem": "goal",
+        "contribution": "novelty",
+        "novel": "novelty",
+        "new": "novelty",
         "finding": "result",
         "results": "result",
+        "evidence": "result",
+        "evaluation": "result",
         "approach": "method",
         "methods": "method",
+        "mechanism": "method",
+        "intervention": "method",
         "caveat": "limitation",
-        "term": "definition",
+        "constraint": "limitation",
+        "tradeoff": "limitation",
     }
     normalized = aliases.get(normalized, normalized)
-    if normalized in {"goal", "method", "result", "limitation", "definition"}:
+    if normalized in {"goal", "novelty", "method", "result", "limitation"}:
         return normalized
-    return "important"
+    return "goal"
 
 
 def public_page_sizes(pages: list[dict[str, Any]]) -> list[dict[str, float | int]]:

@@ -1,15 +1,22 @@
 from pathlib import Path
 
+import fitz
 import pytest
 
 from app.ai import (
+    MAX_ANALYSIS_HIGHLIGHTS,
     analyze_page_figures,
+    abstract_region_text,
     build_analysis_prompt,
     build_chat_prompt,
     build_selection_explanation_prompt,
     choose_provider,
     choose_vision_provider,
+    format_analysis_text,
+    format_guided_reading_text,
+    limit_abstract_highlights,
     normalize_analysis,
+    normalize_highlight_snippet,
     parse_json_payload,
     sanitize_prompt_text,
     select_relevant_excerpts,
@@ -17,9 +24,11 @@ from app.ai import (
 from app.paper_processing import (
     ExtractedPaper,
     clean_pdf_text,
+    find_exact_rects,
     normalize_text,
     score_match,
     search_phrases,
+    sanitize_label,
     slugify,
     sort_highlights,
     split_sentences,
@@ -53,6 +62,27 @@ def test_search_phrases_include_reasonable_chunks():
     assert all(len(phrase) >= 40 for phrase in phrases)
 
 
+def test_find_exact_rects_returns_line_level_sentence_rects(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    sentence = (
+        "Predicting which candidates will produce strong knockdown requires models that generalize across experiments, "
+        "but published predictors are trained and evaluated on incompatible datasets."
+    )
+    doc = fitz.open()
+    page = doc.new_page(width=360, height=240)
+    page.insert_textbox(fitz.Rect(72, 72, 260, 180), sentence, fontsize=10)
+    doc.save(pdf_path)
+    doc.close()
+
+    page_number, rects = find_exact_rects(pdf_path, sentence)
+
+    with fitz.open(pdf_path) as saved_doc:
+        line_count = len({(word[5], word[6]) for word in saved_doc[0].get_text("words")})
+    assert page_number == 1
+    assert len(rects) == line_count
+    assert len(rects) < len(sentence.split()) / 2
+
+
 def test_parse_json_payload_handles_markdown_fence():
     payload = parse_json_payload('```json\n{"ok": true, "items": [1]}\n```')
     assert payload == {"ok": True, "items": [1]}
@@ -63,29 +93,176 @@ def test_parse_json_payload_accepts_raw_control_characters_in_strings():
     assert payload == {"snippet": "first line\nsecond line"}
 
 
-def test_build_analysis_prompt_uses_requested_highlight_count():
-    extracted = ExtractedPaper("Useful paper", "This paper has enough\x00text to analyze.", [], [])
+def test_build_analysis_prompt_asks_for_complete_guided_highlights():
+    extracted = ExtractedPaper(
+        "Useful paper",
+        "This paper has enough\x00text to analyze.",
+        [{"page_number": 2, "text": "Body text with enough detail to analyze."}],
+        [],
+    )
 
-    prompt = build_analysis_prompt(extracted, 15)
+    prompt = build_analysis_prompt(extracted)
 
-    assert "Return exactly 15 highlights." in prompt
+    assert "goal|novelty|method|result|limitation" in prompt
+    assert "do not optimize for the absolute minimum" in prompt
+    assert "Use the novelty label for contribution claims" in prompt
+    assert "Use the limitation label only for limitations of this paper's own data" in prompt
+    assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
+    assert "Never end a snippet mid-word or mid-sentence" in prompt
+    assert "Choose highlights from the paper body text below" in prompt
+    assert "choose the body sentence" in prompt
+    assert "Do not cluster the set in the opening motivation" in prompt
+    assert "[Page 2]" in prompt
+    assert "Paper body text:" in prompt
+    assert "Return exactly" not in prompt
     assert "\x00" not in prompt
 
 
-def test_normalize_analysis_caps_highlights_to_requested_count():
+def test_format_analysis_text_adds_page_markers_without_mutating_text():
+    extracted = ExtractedPaper(
+        "Useful paper",
+        "Fallback text",
+        [
+            {"page_number": 1, "text": "Abstract text."},
+            {"page_number": 2, "text": "Body\x00 text."},
+        ],
+        [],
+    )
+
+    text = format_analysis_text(extracted)
+
+    assert "[Page 1]\nAbstract text." in text
+    assert "[Page 2]\nBody  text." in text
+
+
+def test_format_guided_reading_text_removes_front_matter_and_references():
+    extracted = ExtractedPaper(
+        "Useful paper",
+        "",
+        [
+            {
+                "page_number": 1,
+                "text": (
+                    "Title\nAuthors\nAbstract\n"
+                    "Background\nAbstract-only motivation. "
+                    "Methods\nAbstract-only method. "
+                    "Results\nAbstract-only result.\n"
+                    "1 Introduction\nBody contribution starts here."
+                ),
+            },
+            {"page_number": 2, "text": "The method body gives implementation details."},
+            {"page_number": 3, "text": "References\nA. Author. 2024. Reference title."},
+        ],
+        [],
+    )
+
+    text = format_guided_reading_text(extracted)
+
+    assert "Abstract-only" not in text
+    assert "[Page 1]\n1 Introduction Body contribution starts here." in text
+    assert "[Page 2]\nThe method body gives implementation details." in text
+    assert "References" not in text
+
+
+def test_limit_abstract_highlights_keeps_one_orientation_highlight():
+    extracted = ExtractedPaper(
+        "Useful paper",
+        "",
+        [
+            {
+                "page_number": 1,
+                "text": (
+                    "Title\nAbstract\n"
+                    "Existing tools fail on biomedical data. "
+                    "Here, we introduce a guided agent system. "
+                    "It reaches state of the art on many tasks.\n"
+                    "Introduction\nThe system validates each modeling step in the body."
+                ),
+            }
+        ],
+        [],
+    )
+    highlights = [
+        {"label": "limitation", "snippet": "Existing tools fail on biomedical data.", "reason": ""},
+        {"label": "goal", "snippet": "Here, we introduce a guided agent system.", "reason": ""},
+        {"label": "result", "snippet": "It reaches state of the art on many tasks.", "reason": ""},
+        {"label": "method", "snippet": "The system validates each modeling step in the body.", "reason": ""},
+    ]
+
+    filtered = limit_abstract_highlights(highlights, extracted)
+
+    assert [item["snippet"] for item in filtered] == [
+        "Here, we introduce a guided agent system.",
+        "The system validates each modeling step in the body.",
+    ]
+
+
+def test_abstract_region_text_stops_before_introduction():
+    extracted = ExtractedPaper(
+        "Useful paper",
+        "",
+        [{"page_number": 1, "text": "Abstract\nAbstract claim.\nIntroduction\nBody claim."}],
+        [],
+    )
+
+    assert abstract_region_text(extracted) == "Abstract claim."
+
+
+def test_abstract_region_text_keeps_structured_abstract_until_introduction():
+    extracted = ExtractedPaper(
+        "Useful paper",
+        "",
+        [
+            {
+                "page_number": 1,
+                "text": (
+                    "Abstract\n"
+                    "Background\nExisting tools fail. "
+                    "Methods\nWe test a new system. "
+                    "Results\nThe system improves results.\n"
+                    "1 Introduction\nBody claim."
+                ),
+            }
+        ],
+        [],
+    )
+
+    assert abstract_region_text(extracted) == (
+        "Background Existing tools fail. Methods We test a new system. Results The system improves results."
+    )
+
+
+def test_normalize_analysis_caps_highlights_to_hard_limit():
     extracted = ExtractedPaper("Useful paper", "", [], [])
     payload = {
         "title": "Useful paper",
         "highlights": [
-            {"label": "goal", "snippet": "one", "reason": "first"},
-            {"label": "method", "snippet": "two", "reason": "second"},
-            {"label": "result", "snippet": "three", "reason": "third"},
+            {"label": "goal", "snippet": str(index), "reason": "reason"}
+            for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
         ],
     }
 
-    analysis = normalize_analysis(payload, extracted, 2)
+    analysis = normalize_analysis(payload, extracted)
 
-    assert [item["snippet"] for item in analysis["highlights"]] == ["one", "two"]
+    assert len(analysis["highlights"]) == MAX_ANALYSIS_HIGHLIGHTS
+
+
+def test_normalize_highlight_snippet_does_not_cut_mid_sentence():
+    long_sentence = "This complete sentence should survive even when followed by extra text. "
+    extra = " ".join(["additional"] * 120)
+
+    snippet = normalize_highlight_snippet(long_sentence + extra)
+
+    assert snippet == long_sentence.strip()
+
+
+def test_sanitize_label_uses_guided_reading_facets():
+    assert sanitize_label("objective") == "goal"
+    assert sanitize_label("contribution") == "novelty"
+    assert sanitize_label("approach") == "method"
+    assert sanitize_label("evidence") == "result"
+    assert sanitize_label("tradeoff") == "limitation"
+    assert sanitize_label("definition") == "goal"
 
 
 def test_build_selection_explanation_prompt_uses_selection_and_page_context():

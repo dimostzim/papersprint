@@ -1,45 +1,37 @@
-# Paper Reader AI
+# PaperSprint
 
-Local-first Semantic Reader-style MVP for reading papers faster.
+PaperSprint is a local-first PDF paper reader for fast scientific triage. It loads papers in the browser, adds AI-guided reading support, and keeps a paper-aware chat beside the PDF.
 
-## What works
+## Features
 
-- Upload a PDF from the browser.
-- View the PDF with highlighted AI-selected passages.
-- Read summary, takeaways, and figures.
-- Keep uploaded papers only for the current server session.
-- Analyze figures, plots, diagrams, screenshots, and tables from rendered page images with Codex CLI vision support or an OpenAI vision-capable model.
-- Chat with the paper in a side panel.
-- Toggle web search in chat for external context.
-- Use `codex` CLI subscription or an OpenAI API key.
+- Upload and read PDFs locally.
+- Generate a paper summary and takeaways.
+- Show guided highlights on the PDF for goal, novelty, method, result, and limitation.
+- Click citations in the paper and add the full reference-list entry to chat.
+- Select text in the PDF and send it to chat for explanation.
+- Chat with the current paper, with optional web search.
+- Analyze figures, tables, plots, diagrams, and screenshots in a separate figures view.
+- Cache analyzed papers and remove papers from the local library.
 
 ## Quick Start
 
 ```bash
-cd /Users/nucleotaid/Projects/paper-reader-ai
+cd /Users/nucleotaid/Projects/papersprint
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8788
 ```
 
-Open `http://127.0.0.1:8787`.
+Open `http://127.0.0.1:8788`.
 
-## AI Providers
+## Figure Analysis
 
-The default `AI_PROVIDER=auto` chooses:
+After loading a paper, click `Figures` to open the figures workspace. PaperSprint renders PDF pages as images and uses Codex to identify and summarize figures, tables, plots, diagrams, screenshots, and multi-panel visual evidence.
 
-1. `openai` if `OPENAI_API_KEY` is set.
-2. `codex` if the `codex` CLI is installed and logged in.
+## Data And Cache
 
-If neither provider is available, analysis and chat fail with a clear error instead of producing heuristic output.
-
-ChatGPT consumer subscriptions do not expose a direct programmatic API. The `codex` provider is the practical local subscription path because it calls `codex exec` non-interactively.
-
-## Notes
-
-- Text-based PDFs work best. Scanned image PDFs need OCR, which is not part of this MVP.
-- Highlight grounding uses exact PDF text search first, then approximate sentence matching.
-- Uploaded papers and analyses are stored in memory plus `data/session` only while the server is running; restarting clears them.
-- Figure analysis renders PDF pages to JPEG. The figures page uses the Codex CLI provider, and the backend can also use OpenAI with `OPENAI_VISION_MODEL`.
-- Future parser upgrade: replace the PyMuPDF extraction layer with PaperMage for richer figures, captions, and document structure.
+- Current-session PDFs live under `data/session`.
+- Cached analyzed records and PDFs live under `data/cache`.
+- Deleting a paper removes it from the visible library and cache.
+- Clearing `data/cache` forces papers to be parsed and analyzed again.

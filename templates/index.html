@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Paper Reader AI</title>
-    <link rel="stylesheet" href="/static/styles.css?v=13" />
+    <title>PaperSprint</title>
+    <link rel="stylesheet" href="/static/styles.css?v=21" />
   </head>
-  <body>
+  <body class="reader-body">
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark">PR</span>
+        <span class="brand-mark">PS</span>
         <div>
-          <strong>Paper Reader AI</strong>
+          <strong>PaperSprint</strong>
           <span id="provider-status">Loading</span>
         </div>
       </div>
@@ -31,16 +31,18 @@
           placeholder="OpenAI API key"
           aria-label="OpenAI API key"
         />
-        <label class="highlight-picker">
-          <span>Highlights</span>
-          <input id="highlight-count-input" type="number" min="1" max="40" value="15" />
-        </label>
         <label class="file-picker">
           <input id="pdf-input" type="file" accept="application/pdf,.pdf" />
           <span>Choose PDF</span>
         </label>
-        <button type="submit">Analyze</button>
+        <button id="analyze-button" class="loading-button" type="submit">
+          <span class="button-spinner" aria-hidden="true"></span>
+          <span class="button-label">Analyze</span>
+        </button>
         <button id="figures-button" type="button" disabled>Figures</button>
+        <button id="theme-toggle" class="icon-button" title="Toggle dark mode" type="button" aria-label="Toggle dark mode">
+          ☾
+        </button>
       </form>
     </header>
 
@@ -57,6 +59,7 @@
             <h2>Highlights</h2>
             <span id="highlight-count">0</span>
           </div>
+          <div id="highlight-filters" class="highlight-filters"></div>
           <div id="highlight-list" class="highlight-list"></div>
         </section>
       </aside>
@@ -73,13 +76,22 @@
         <section class="summary-panel">
           <div class="paper-heading">
             <span id="paper-provider" class="provider-pill">Idle</span>
-            <h1 id="paper-title">Paper Reader AI</h1>
+            <h1 id="paper-title">PaperSprint</h1>
           </div>
           <p id="paper-overview"></p>
 
           <h2 class="summary-section-title">Takeaways</h2>
           <div id="takeaways-tab" class="tab-panel"></div>
         </section>
+
+        <div
+          id="chat-resize-handle"
+          class="chat-resize-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize chat panel"
+          tabindex="0"
+        ></div>
 
         <section class="chat-panel">
           <div class="chat-header">
@@ -101,10 +113,9 @@
     <div id="selection-popover" class="selection-popover hidden">
       <button id="explain-selection-button" type="button">Explain</button>
     </div>
-    <div id="citation-popover" class="citation-popover hidden">
-      <button id="add-citation-button" type="button">Add to chat</button>
-    </div>
+    <div id="citation-popover" class="citation-popover hidden"></div>
     <div id="toast" class="toast hidden"></div>
-    <script type="module" src="/static/app.js?v=13"></script>
+    <script type="module" src="/static/theme.js?v=14"></script>
+    <script type="module" src="/static/app.js?v=23"></script>
   </body>
 </html>
