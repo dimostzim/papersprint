@@ -229,7 +229,10 @@ def restore_all_cached_papers() -> int:
     loaded_count = 0
     record_paths = sorted(CACHE_RECORDS_DIR.glob("*.json"), key=lambda path: path.stat().st_mtime)
     for record_path in record_paths:
-        paper = cached_paper_from_record(record_path)
+        try:
+            paper = cached_paper_from_record(record_path)
+        except (json.JSONDecodeError, OSError, RuntimeError, shutil.Error, fitz.FileDataError, fitz.EmptyFileError):
+            continue
         if not paper:
             continue
         write_paper(paper)

@@ -228,6 +228,65 @@ def test_upload_refreshes_stale_cached_citations(tmp_path, monkeypatch):
     assert refreshed_record["citation_version"] == main.CITATION_VERSION
 
 
+def test_refresh_cache_skips_unreadable_cached_pdf(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    valid_data = make_pdf_bytes()
+    valid_digest = main.file_digest(valid_data)
+    invalid_digest = "bad-digest"
+    (cache_papers_dir / f"{valid_digest}.pdf").write_bytes(valid_data)
+    (cache_papers_dir / f"{invalid_digest}.pdf").write_bytes(b"")
+
+    base_record = {
+        "analysis_version": main.ANALYSIS_VERSION,
+        "overview": "Cached.",
+        "key_takeaways": [],
+        "read_this_first": [],
+        "glossary": [],
+        "highlights": [],
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": [],
+        "citation_version": main.CITATION_VERSION,
+        "questions": [],
+        "provider_used": "codex",
+        "warnings": [],
+        "page_sizes": [],
+        "sentences": [],
+        "full_text_chars": 42,
+        "analysis_status": "complete",
+        "analysis_error": "",
+    }
+    (cache_records_dir / f"{valid_digest}.json").write_text(
+        json.dumps({**base_record, "id": "old-good", "filename": "good.pdf", "stored_pdf": "good.pdf", "digest": valid_digest, "title": "Good"}),
+        encoding="utf-8",
+    )
+    (cache_records_dir / f"{invalid_digest}.json").write_text(
+        json.dumps({**base_record, "id": "old-bad", "filename": "bad.pdf", "stored_pdf": "bad.pdf", "digest": invalid_digest, "title": "Bad", "citation_version": 0}),
+        encoding="utf-8",
+    )
+
+    client = TestClient(main.app)
+    response = client.post("/api/papers/refresh-cache")
+
+    assert response.status_code == 200
+    assert response.json()["loaded_count"] == 1
+    assert list(main.PAPERS) == [valid_digest[:12]]
+
+
 def test_cache_paper_persists_figure_records_and_images(tmp_path, monkeypatch):
     papers_dir = tmp_path / "papers"
     figures_dir = tmp_path / "figures"
