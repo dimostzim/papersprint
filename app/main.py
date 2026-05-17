@@ -18,7 +18,7 @@ from starlette.requests import Request
 from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_status
 from .citations import extract_citations, ground_citation_rects
 from .figures import analyze_figures, figure_directory
-from .paper_processing import extract_pdf, file_digest, public_page_sizes, slugify, sort_highlights
+from .paper_processing import extract_pdf, file_digest, find_exact_rects, public_page_sizes, slugify, sort_highlights
 from .web_search import search_web
 
 load_dotenv()
@@ -300,6 +300,21 @@ def clean_highlight_record(highlight: dict[str, Any]) -> dict[str, Any] | None:
     return clean
 
 
+def ground_clean_highlight(
+    clean: dict[str, Any],
+    raw_highlight: dict[str, Any],
+    pdf_path: Path,
+) -> dict[str, Any]:
+    if not raw_highlight.get("reground") or not pdf_path.exists():
+        return clean
+
+    page_number, rects = find_exact_rects(pdf_path, clean["snippet"], clean.get("page_number"))
+    if rects:
+        clean["page_number"] = page_number
+        clean["rects"] = rects
+    return clean
+
+
 def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[str, Any]:
     highlights = sort_highlights(paper.get("highlights", []))
     base = {
@@ -566,15 +581,15 @@ def get_paper(paper_id: str):
 @app.put("/api/papers/{paper_id}/highlights")
 def update_paper_highlights(paper_id: str, request: HighlightsUpdateRequest):
     paper = read_paper(paper_id)
+    pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
     highlights = [
-        clean
+        ground_clean_highlight(clean, item, pdf_path)
         for item in request.highlights[:120]
         if (clean := clean_highlight_record(item))
     ]
     paper["highlights"] = sort_highlights(highlights)
     write_paper(paper)
 
-    pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
     if pdf_path.exists():
         cache_paper(paper, pdf_path)
 

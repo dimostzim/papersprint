@@ -367,7 +367,15 @@ h2 {
   border-radius: 8px;
 }
 
-.paper-list,
+.paper-list {
+  display: grid;
+  gap: 5px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 0 10px 10px;
+  overscroll-behavior: contain;
+}
+
 .highlight-list {
   display: grid;
   gap: 8px;
@@ -426,10 +434,10 @@ h2 {
 .paper-card-main {
   min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: 2px;
   border: 0;
   background: transparent;
-  padding: 12px 8px 12px 12px;
+  padding: 6px 6px 6px 9px;
   text-align: left;
 }
 
@@ -438,13 +446,13 @@ h2 {
 }
 
 .paper-remove-button {
-  width: 30px;
-  height: 30px;
-  margin: 8px 8px 0 0;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  margin: 5px 5px 0 0;
+  border-radius: 7px;
   padding: 0;
   color: var(--muted);
-  font-size: 18px;
+  font-size: 15px;
   line-height: 1;
 }
 
@@ -463,13 +471,28 @@ h2 {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.paper-card strong,
+.paper-card strong {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .highlight-card strong {
   font-size: 13px;
   line-height: 1.35;
 }
 
-.paper-card span,
+.paper-card span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .highlight-card small,
 .muted-box {
   color: var(--muted);
@@ -593,6 +616,7 @@ h2 {
   opacity: 1;
   text-align: initial;
   text-size-adjust: none;
+  user-select: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
   z-index: 1;
@@ -604,6 +628,7 @@ h2 {
   color: transparent;
   white-space: pre;
   cursor: text;
+  user-select: none;
   transform-origin: 0% 0%;
 }
 
@@ -616,6 +641,14 @@ h2 {
   inset: 0;
   pointer-events: none;
   z-index: 2;
+}
+
+.selection-preview-rect {
+  position: absolute;
+  border-radius: 3px;
+  background: var(--selection-bg);
+  outline: 1px solid var(--accent);
+  pointer-events: none;
 }
 
 .highlight-rect {
@@ -1097,15 +1130,29 @@ h2 {
 }
 
 .selection-highlight-form select,
-.selection-highlight-form input {
+.selection-highlight-form input,
+.selection-highlight-form textarea {
   min-width: 0;
-  height: 30px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--panel-soft);
   color: var(--ink);
   padding: 0 8px;
   font-size: 12px;
+}
+
+.selection-highlight-form select,
+.selection-highlight-form input {
+  height: 30px;
+}
+
+.selection-highlight-form textarea {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 64px;
+  padding: 7px 8px;
+  resize: vertical;
+  line-height: 1.35;
 }
 
 .selection-highlight-form input[type="color"] {

@@ -237,14 +237,24 @@ def search_phrases(snippet: str) -> list[str]:
     return unique
 
 
-def find_exact_rects(pdf_path: Path, snippet: str) -> tuple[int | None, list[list[float]]]:
+def find_exact_rects(
+    pdf_path: Path,
+    snippet: str,
+    preferred_page_number: int | None = None,
+) -> tuple[int | None, list[list[float]]]:
     phrases = search_phrases(snippet)
     if not phrases:
         return None, []
 
     doc = fitz.open(pdf_path)
     try:
-        for page_index, page in enumerate(doc):
+        page_indexes = list(range(len(doc)))
+        if preferred_page_number and 1 <= preferred_page_number <= len(doc):
+            preferred_index = preferred_page_number - 1
+            page_indexes = [preferred_index, *[index for index in page_indexes if index != preferred_index]]
+
+        for page_index in page_indexes:
+            page = doc[page_index]
             full_rects = find_phrase_word_rects(page, snippet)
             if full_rects:
                 return page_index + 1, full_rects

@@ -445,6 +445,68 @@ def test_update_highlights_persists_to_cache(tmp_path, monkeypatch):
     assert cached_record["highlights"][0]["color"] == "#bb66cc"
 
 
+def test_update_manual_highlight_regrounds_to_selected_page(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    snippet = "Repeated exact highlight target for manual grounding."
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), snippet)
+    doc.new_page().insert_text((72, 144), snippet)
+    pdf_path = papers_dir / "paper.pdf"
+    doc.save(pdf_path)
+    doc.close()
+
+    main.PAPERS["paper-1"] = {
+        "id": "paper-1",
+        "filename": "paper.pdf",
+        "stored_pdf": "paper.pdf",
+        "digest": "digest-1",
+        "title": "Readable paper",
+        "highlights": [],
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": [],
+        "page_sizes": [],
+        "analysis_status": "complete",
+    }
+
+    client = TestClient(main.app)
+    response = client.put(
+        "/api/papers/paper-1/highlights",
+        json={
+            "highlights": [
+                {
+                    "label": "goal",
+                    "snippet": snippet,
+                    "reason": "manual",
+                    "page_number": 2,
+                    "rects": [[1, 1, 2, 2]],
+                    "reground": True,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    highlight = response.json()["highlights"][0]
+    assert highlight["page_number"] == 2
+    assert highlight["rects"] != [[1, 1, 2, 2]]
+    assert highlight["rects"][0][1] > 100
+
+
 def test_chat_passes_figure_context(monkeypatch):
     main.PAPERS.clear()
     main.PAPERS["paper-1"] = {

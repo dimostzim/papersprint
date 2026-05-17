@@ -30,6 +30,8 @@ const state = {
   analysisPoll: null,
   uploadPromise: null,
   pageTexts: new Map(),
+  pageWords: new Map(),
+  textSelectionDrag: null,
   activeSelection: null,
   activeCitation: null,
   activeHighlightIndex: null,
@@ -67,6 +69,7 @@ const els = {
   explainSelectionButton: document.getElementById("explain-selection-button"),
   addSelectionHighlightButton: document.getElementById("add-selection-highlight-button"),
   selectionHighlightForm: document.getElementById("selection-highlight-form"),
+  highlightTextInput: document.getElementById("highlight-text-input"),
   highlightCategorySelect: document.getElementById("highlight-category-select"),
   highlightCategoryInput: document.getElementById("highlight-category-input"),
   highlightColorInput: document.getElementById("highlight-color-input"),
@@ -367,8 +370,8 @@ function renderPaperList() {
   });
 }
 
-function upsertPaperSummary(paper) {
-  const summary = {
+function paperSummary(paper) {
+  return {
     id: paper.id,
     filename: paper.filename,
     title: paper.title,
@@ -381,6 +384,10 @@ function upsertPaperSummary(paper) {
     figure_count: paper.figure_count ?? paper.figures?.length ?? 0,
     citation_count: paper.citation_count ?? paper.citations?.length ?? 0,
   };
+}
+
+function upsertPaperSummary(paper) {
+  const summary = paperSummary(paper);
   const existingIndex = state.papers.findIndex((item) => item.id === paper.id);
   if (existingIndex === -1) {
     state.papers = [summary, ...state.papers];
@@ -388,6 +395,23 @@ function upsertPaperSummary(paper) {
   }
 
   state.papers = state.papers.map((item, index) => (index === existingIndex ? summary : item));
+}
+
+function prependPaperSummaries(papers) {
+  const summaries = [];
+  const seen = new Set();
+  for (const paper of papers) {
+    if (!paper?.id || seen.has(paper.id)) {
+      continue;
+    }
+    seen.add(paper.id);
+    summaries.push(paperSummary(paper));
+  }
+
+  state.papers = [
+    ...summaries,
+    ...state.papers.filter((paper) => !seen.has(paper.id)),
+  ];
 }
 
 async function selectPaper(paperId) {
@@ -435,6 +459,8 @@ function clearSelectedPaper() {
   state.selectedPaper = null;
   state.chatMessages = [];
   state.pageTexts = new Map();
+  state.pageWords = new Map();
+  state.textSelectionDrag = null;
   state.pendingCitationContext = null;
   state.activeHighlightFacet = "all";
   hideSelectionPopover();
@@ -841,6 +867,8 @@ function highlightsByPage(highlights) {
 async function renderPdf(paper) {
   const token = ++state.renderToken;
   state.pageTexts = new Map();
+  state.pageWords = new Map();
+  state.textSelectionDrag = null;
   hideSelectionPopover();
   hideCitationPopover();
   hideHighlightPopover();
@@ -912,6 +940,7 @@ async function renderTextLayer(page, textLayer, viewport, pageNumber) {
     viewport,
   });
   await layer.render();
+  collectTextLayerWords(textLayer, pageNumber);
 }
 
 async function renderPdfPreservingScroll(paper) {
@@ -988,28 +1017,46 @@ async function loadSelectedPaper() {
     return state.uploadPromise;
   }
 
-  const file = els.pdfInput?.files?.[0];
-  if (!file) {
-    showToast("Choose a PDF first");
+  const files = Array.from(els.pdfInput?.files || []);
+  if (!files.length) {
+    showToast("Choose one or more PDFs first");
     return null;
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
-
-  showToast(`Loading ${file.name}`, true);
+  showToast(`Loading ${files.length} PDF${files.length === 1 ? "" : "s"}`, true);
   showReaderLoading();
-  state.uploadPromise = requestJson("/api/upload", {
-    method: "POST",
-    body: formData,
-  })
-    .then(async (paper) => {
-      hideToast();
-      setSelectedPaper(paper);
-      await renderPdf(paper);
-      showToast("PDF loaded. Click Analyze when ready.");
-      return paper;
-    })
+
+  state.uploadPromise = (async () => {
+    const uploadedPapers = [];
+
+    for (const [index, file] of files.entries()) {
+      const formData = new FormData();
+      formData.append("file", file);
+      showToast(`Loading ${index + 1}/${files.length}: ${file.name}`, true);
+      const paper = await requestJson("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      uploadedPapers.push(paper);
+    }
+
+    prependPaperSummaries(uploadedPapers);
+    renderPaperList();
+
+    const selectedPaper = uploadedPapers[0] || null;
+    if (selectedPaper) {
+      setSelectedPaper(selectedPaper);
+      await renderPdf(selectedPaper);
+    }
+
+    hideToast();
+    showToast(
+      files.length === 1
+        ? "PDF loaded. Click Analyze when ready."
+        : `${files.length} PDFs loaded. Select a paper or click Analyze for the first one.`,
+    );
+    return selectedPaper;
+  })()
     .finally(() => {
       state.uploadPromise = null;
     });
@@ -1024,7 +1071,7 @@ async function startSelectedPaperAnalysis(event) {
   }
 
   let paper = state.uploadPromise ? await state.uploadPromise : state.selectedPaper;
-  if (!paper && els.pdfInput?.files?.[0]) {
+  if (!paper && els.pdfInput?.files?.length) {
     paper = await loadSelectedPaper();
   }
   if (!paper) {
@@ -1158,6 +1205,177 @@ function roundRectValue(value) {
   return Math.round(value * 100) / 100;
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function cleanSelectedText(words) {
+  return words
+    .map((word) => word.text)
+    .join(" ")
+    .replace(/\s+([,.;:!?%)\]])/g, "$1")
+    .replace(/([([])\s+/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function collectTextLayerWords(textLayer, pageNumber) {
+  const page = textLayer.closest(".pdf-page");
+  const pageSize = pageSizeFor(pageNumber);
+  if (!page || !pageSize) {
+    state.pageWords.set(pageNumber, []);
+    return;
+  }
+
+  const pageRect = page.getBoundingClientRect();
+  const scaleX = pageSize.width / pageRect.width;
+  const scaleY = pageSize.height / pageRect.height;
+  const words = [];
+
+  textLayer.querySelectorAll("span").forEach((span) => {
+    const text = span.textContent || "";
+    const matches = Array.from(text.matchAll(/\S+/g));
+    if (!matches.length) {
+      return;
+    }
+
+    const spanRect = span.getBoundingClientRect();
+    if (spanRect.width < 1 || spanRect.height < 1) {
+      return;
+    }
+
+    const textLength = Math.max(text.length, 1);
+    for (const match of matches) {
+      const startRatio = match.index / textLength;
+      const endRatio = (match.index + match[0].length) / textLength;
+      const x0 = spanRect.left - pageRect.left + spanRect.width * startRatio;
+      const x1 = spanRect.left - pageRect.left + spanRect.width * endRatio;
+      const y0 = spanRect.top - pageRect.top;
+      const y1 = spanRect.bottom - pageRect.top;
+      words.push({
+        text: match[0],
+        cssRect: [x0, y0, x1, y1].map(roundRectValue),
+        pdfRect: [
+          roundRectValue(x0 * scaleX),
+          roundRectValue(y0 * scaleY),
+          roundRectValue(x1 * scaleX),
+          roundRectValue(y1 * scaleY),
+        ],
+      });
+    }
+  });
+
+  state.pageWords.set(pageNumber, words);
+}
+
+function distanceToRect(x, y, rect) {
+  const dx = x < rect[0] ? rect[0] - x : x > rect[2] ? x - rect[2] : 0;
+  const dy = y < rect[1] ? rect[1] - y : y > rect[3] ? y - rect[3] : 0;
+  return dx * dx + dy * dy;
+}
+
+function nearestWordIndex(words, x, y) {
+  let bestIndex = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  words.forEach((word, index) => {
+    const distance = distanceToRect(x, y, word.cssRect);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function mergeWordRects(words, rectKey) {
+  const lines = [];
+  const sortedWords = [...words].sort((left, right) => {
+    const leftCenter = (left.cssRect[1] + left.cssRect[3]) / 2;
+    const rightCenter = (right.cssRect[1] + right.cssRect[3]) / 2;
+    return leftCenter - rightCenter || left.cssRect[0] - right.cssRect[0];
+  });
+
+  for (const word of sortedWords) {
+    const centerY = (word.cssRect[1] + word.cssRect[3]) / 2;
+    const line = lines.find((item) => Math.abs(item.centerY - centerY) <= 5);
+    if (line) {
+      line.words.push(word);
+      line.centerY = (line.centerY * (line.words.length - 1) + centerY) / line.words.length;
+    } else {
+      lines.push({ centerY, words: [word] });
+    }
+  }
+
+  return lines.map((line) => {
+    const rects = line.words.map((word) => word[rectKey]);
+    return [
+      roundRectValue(Math.min(...rects.map((rect) => rect[0]))),
+      roundRectValue(Math.min(...rects.map((rect) => rect[1]))),
+      roundRectValue(Math.max(...rects.map((rect) => rect[2]))),
+      roundRectValue(Math.max(...rects.map((rect) => rect[3]))),
+    ];
+  });
+}
+
+function clientRectForWords(page, words) {
+  const pageRect = page.getBoundingClientRect();
+  const rects = mergeWordRects(words, "cssRect");
+  return {
+    left: pageRect.left + Math.min(...rects.map((rect) => rect[0])),
+    top: pageRect.top + Math.min(...rects.map((rect) => rect[1])),
+    width: Math.max(...rects.map((rect) => rect[2])) - Math.min(...rects.map((rect) => rect[0])),
+    height: Math.max(...rects.map((rect) => rect[3])) - Math.min(...rects.map((rect) => rect[1])),
+  };
+}
+
+function clearSelectionPreview() {
+  els.pdfViewer?.querySelectorAll(".selection-preview-rect").forEach((node) => node.remove());
+}
+
+function selectionPreviewRects(selection, page) {
+  if (selection.previewRects?.length) {
+    return selection.previewRects;
+  }
+
+  const pageSize = pageSizeFor(selection.pageNumber);
+  if (!pageSize) {
+    return [];
+  }
+  const pageRect = page.getBoundingClientRect();
+  const scaleX = pageRect.width / pageSize.width;
+  const scaleY = pageRect.height / pageSize.height;
+  return (selection.rects || []).map((rect) => [
+    roundRectValue(rect[0] * scaleX),
+    roundRectValue(rect[1] * scaleY),
+    roundRectValue(rect[2] * scaleX),
+    roundRectValue(rect[3] * scaleY),
+  ]);
+}
+
+function showSelectionPreview(selection) {
+  clearSelectionPreview();
+  if (!selection?.pageNumber) {
+    return;
+  }
+
+  const page = els.pdfViewer?.querySelector(`[data-page-number="${selection.pageNumber}"]`);
+  const overlay = page?.querySelector(".overlay-layer");
+  if (!overlay) {
+    return;
+  }
+
+  for (const rect of selectionPreviewRects(selection, page)) {
+    const [x0, y0, x1, y1] = rect;
+    const node = document.createElement("div");
+    node.className = "selection-preview-rect";
+    node.style.left = `${x0}px`;
+    node.style.top = `${y0}px`;
+    node.style.width = `${Math.max(4, x1 - x0)}px`;
+    node.style.height = `${Math.max(4, y1 - y0)}px`;
+    overlay.appendChild(node);
+  }
+}
+
 function selectionRectsForPage(range, page, pageNumber) {
   const pageSize = pageSizeFor(pageNumber);
   if (!pageSize) {
@@ -1225,6 +1443,111 @@ function selectedTextFromPdf() {
   };
 }
 
+function pagePointFromEvent(event, page) {
+  const pageRect = page.getBoundingClientRect();
+  return {
+    x: clamp(event.clientX - pageRect.left, 0, pageRect.width),
+    y: clamp(event.clientY - pageRect.top, 0, pageRect.height),
+  };
+}
+
+function customSelectionFromDrag(drag, event) {
+  const words = state.pageWords.get(drag.pageNumber) || [];
+  if (!words.length) {
+    return null;
+  }
+
+  const end = pagePointFromEvent(event, drag.page);
+  const startIndex = nearestWordIndex(words, drag.x, drag.y);
+  const endIndex = nearestWordIndex(words, end.x, end.y);
+  if (startIndex === null || endIndex === null) {
+    return null;
+  }
+
+  const firstIndex = Math.min(startIndex, endIndex);
+  const lastIndex = Math.max(startIndex, endIndex);
+  const selectedWords = words.slice(firstIndex, lastIndex + 1);
+  const text = cleanSelectedText(selectedWords);
+  if (text.length < 2 || text.length > 900) {
+    return null;
+  }
+
+  return {
+    text,
+    pageNumber: drag.pageNumber,
+    pageText: state.pageTexts.get(drag.pageNumber) || "",
+    rects: mergeWordRects(selectedWords, "pdfRect"),
+    previewRects: mergeWordRects(selectedWords, "cssRect"),
+    rect: clientRectForWords(drag.page, selectedWords),
+  };
+}
+
+function startTextSelection(event) {
+  if (event.button !== 0 || event.target.closest?.(".highlight-rect, .citation-rect")) {
+    return;
+  }
+
+  const page = event.target.closest?.(".pdf-page");
+  const pageNumber = Number(page?.dataset.pageNumber) || null;
+  if (!page || !pageNumber || !(state.pageWords.get(pageNumber) || []).length) {
+    return;
+  }
+
+  const point = pagePointFromEvent(event, page);
+  state.textSelectionDrag = {
+    page,
+    pageNumber,
+    x: point.x,
+    y: point.y,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  };
+  window.getSelection()?.removeAllRanges();
+  hideSelectionPopover();
+  hideCitationPopover();
+  hideHighlightPopover();
+  event.preventDefault();
+}
+
+function updateTextSelection(event) {
+  const drag = state.textSelectionDrag;
+  if (!drag) {
+    return;
+  }
+
+  const distance = Math.hypot(event.clientX - drag.clientX, event.clientY - drag.clientY);
+  if (distance < 4) {
+    clearSelectionPreview();
+    return;
+  }
+
+  const selection = customSelectionFromDrag(drag, event);
+  if (selection) {
+    showSelectionPreview(selection);
+  }
+}
+
+function finishTextSelection(event) {
+  const drag = state.textSelectionDrag;
+  state.textSelectionDrag = null;
+  if (!drag) {
+    return;
+  }
+
+  const distance = Math.hypot(event.clientX - drag.clientX, event.clientY - drag.clientY);
+  if (distance < 4) {
+    clearSelectionPreview();
+    return;
+  }
+
+  const selection = customSelectionFromDrag(drag, event);
+  if (selection) {
+    showSelectionPopoverFor(selection);
+  } else {
+    clearSelectionPreview();
+  }
+}
+
 function renderSelectionHighlightCategories() {
   if (!els.highlightCategorySelect) {
     return;
@@ -1248,6 +1571,9 @@ function renderSelectionHighlightCategories() {
 
 function resetSelectionHighlightForm() {
   els.selectionHighlightForm?.classList.add("hidden");
+  if (els.highlightTextInput) {
+    els.highlightTextInput.value = state.activeSelection?.text || "";
+  }
   if (els.highlightCategoryInput) {
     els.highlightCategoryInput.value = "";
   }
@@ -1266,8 +1592,7 @@ function syncSelectionHighlightForm() {
   }
 }
 
-function showSelectionPopover() {
-  const selection = selectedTextFromPdf();
+function showSelectionPopoverFor(selection) {
   if (!selection || !els.selectionPopover) {
     hideSelectionPopover();
     return;
@@ -1281,6 +1606,7 @@ function showSelectionPopover() {
     pageText: selection.pageText,
     rects: selection.rects,
   };
+  showSelectionPreview(selection);
   resetSelectionHighlightForm();
 
   const popover = els.selectionPopover;
@@ -1294,8 +1620,13 @@ function showSelectionPopover() {
   popover.style.left = `${left}px`;
 }
 
+function showSelectionPopover() {
+  showSelectionPopoverFor(selectedTextFromPdf());
+}
+
 function hideSelectionPopover() {
   state.activeSelection = null;
+  clearSelectionPreview();
   els.selectionHighlightForm?.classList.add("hidden");
   els.selectionPopover?.classList.add("hidden");
 }
@@ -1451,11 +1782,17 @@ async function addActiveSelectionHighlight() {
 
   const highlight = {
     label: category.label,
-    snippet: state.activeSelection.text,
+    snippet: (els.highlightTextInput?.value || state.activeSelection.text).replace(/\s+/g, " ").trim(),
     reason: "manual",
     page_number: state.activeSelection.pageNumber,
     rects: state.activeSelection.rects || [],
+    reground: true,
   };
+  if (!highlight.snippet) {
+    showToast("Highlight text is empty");
+    els.highlightTextInput?.focus();
+    return;
+  }
   if (category.color) {
     highlight.color = category.color;
   }
@@ -1589,13 +1926,9 @@ els.pdfInput?.addEventListener("change", () => {
 
 els.providerSelect?.addEventListener("change", syncApiKeyInput);
 
-els.pdfViewer?.addEventListener("mouseup", () => {
-  window.setTimeout(showSelectionPopover, 0);
-});
-
-els.pdfViewer?.addEventListener("keyup", () => {
-  window.setTimeout(showSelectionPopover, 0);
-});
+els.pdfViewer?.addEventListener("pointerdown", startTextSelection);
+window.addEventListener("pointermove", updateTextSelection);
+window.addEventListener("pointerup", finishTextSelection);
 
 els.selectionPopover?.addEventListener("mousedown", (event) => {
   event.stopPropagation();
