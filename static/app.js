@@ -1747,6 +1747,7 @@ function renderHighlightPopover(highlight) {
       <div class="highlight-popover-label">
         <span class="label label-${escapeHtml(highlightLabelId(highlight?.label))}"${customHighlightStyle(highlight)}>${escapeHtml(highlight?.label || "highlight")}</span>
       </div>
+      <button data-explain-highlight type="button">Explain</button>
       <button data-remove-highlight type="button">Remove</button>
     `,
   );
@@ -1924,17 +1925,15 @@ async function removeActiveHighlight() {
   await saveHighlights(highlights, "Highlight removed");
 }
 
-async function explainActiveSelection() {
-  if (!state.selectedPaper || !state.activeSelection) {
-    hideSelectionPopover();
+async function explainSelection(selection, beforeRequest) {
+  if (!state.selectedPaper || !selection) {
     return;
   }
   if (!requireOpenAiKey()) {
     return;
   }
 
-  const selection = state.activeSelection;
-  hideSelectionPopover();
+  beforeRequest?.();
   window.getSelection()?.removeAllRanges();
 
   const label = selection.pageNumber ? `p. ${selection.pageNumber}` : "selected text";
@@ -1958,6 +1957,37 @@ async function explainActiveSelection() {
 
   pending.content = payload.answer || "No explanation returned.";
   renderChat();
+}
+
+async function explainActiveSelection() {
+  if (!state.selectedPaper || !state.activeSelection) {
+    hideSelectionPopover();
+    return;
+  }
+
+  await explainSelection(state.activeSelection, hideSelectionPopover);
+}
+
+async function explainActiveHighlight() {
+  if (!state.selectedPaper || state.activeHighlightIndex === null) {
+    hideHighlightPopover();
+    return;
+  }
+
+  const highlight = (state.selectedPaper.highlights || [])[state.activeHighlightIndex];
+  if (!highlight?.snippet) {
+    hideHighlightPopover();
+    return;
+  }
+
+  await explainSelection(
+    {
+      text: highlight.snippet,
+      pageNumber: highlight.page_number || null,
+      pageText: state.pageTexts.get(highlight.page_number) || highlight.reason || "",
+    },
+    hideHighlightPopover,
+  );
 }
 
 async function sendChatMessage(content, forceWeb = false, citationContext = null) {
@@ -2083,6 +2113,12 @@ els.highlightPopover?.addEventListener("mousedown", (event) => {
 });
 
 els.highlightPopover?.addEventListener("click", (event) => {
+  if (event.target.closest?.("[data-explain-highlight]")) {
+    explainActiveHighlight().catch((error) => {
+      state.chatMessages.push({ role: "assistant", content: error.message || String(error) });
+      renderChat();
+    });
+  }
   if (event.target.closest?.("[data-remove-highlight]")) {
     removeActiveHighlight().catch((error) => showToast(error.message || String(error)));
   }
