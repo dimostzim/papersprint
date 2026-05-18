@@ -135,6 +135,7 @@ const els = {
   chatInput: document.getElementById("chat-input"),
   webToggle: document.getElementById("web-toggle"),
   selectionPopover: document.getElementById("selection-popover"),
+  copySelectionButton: document.getElementById("copy-selection-button"),
   explainSelectionButton: document.getElementById("explain-selection-button"),
   addSelectionHighlightButton: document.getElementById("add-selection-highlight-button"),
   selectionHighlightForm: document.getElementById("selection-highlight-form"),
@@ -3080,6 +3081,39 @@ function hideSelectionPopover() {
   els.selectionPopover?.classList.add("hidden");
 }
 
+function isEditableTarget(target) {
+  const element = target?.nodeType === Node.ELEMENT_NODE ? target : target?.parentElement;
+  return Boolean(element?.closest?.("input, textarea, select, [contenteditable]"));
+}
+
+function activeSelectionCopyText() {
+  return String(state.activeSelection?.text || "").replace(/\s+/g, " ").trim();
+}
+
+function copyActiveSelection(event = null) {
+  const text = activeSelectionCopyText();
+  if (!text) {
+    return false;
+  }
+
+  if (event?.clipboardData) {
+    event.clipboardData.setData("text/plain", text);
+    event.preventDefault();
+    showToast("Copied selected text");
+    return true;
+  }
+
+  if (!navigator.clipboard?.writeText) {
+    showToast("Copy unavailable");
+    return true;
+  }
+
+  navigator.clipboard.writeText(text)
+    .then(() => showToast("Copied selected text"))
+    .catch(() => showToast("Copy failed"));
+  return true;
+}
+
 function renderHighlightPopover(highlight) {
   const explanation = briefText(highlight?.comment || highlight?.reason || highlight?.snippet || "");
   const page = highlight?.page_number ? `p. ${highlight.page_number}` : "unplaced";
@@ -3683,6 +3717,15 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeEffortPickers();
   }
+  if (
+    (event.metaKey || event.ctrlKey)
+    && event.key.toLowerCase() === "c"
+    && !event.altKey
+    && !isEditableTarget(event.target)
+    && copyActiveSelection()
+  ) {
+    event.preventDefault();
+  }
 });
 [
   els.textEffortSelect,
@@ -3697,6 +3740,10 @@ window.addEventListener("pointerup", finishTextSelection);
 
 els.selectionPopover?.addEventListener("mousedown", (event) => {
   event.stopPropagation();
+});
+
+els.copySelectionButton?.addEventListener("click", () => {
+  copyActiveSelection();
 });
 
 els.explainSelectionButton?.addEventListener("click", () => {
@@ -3716,6 +3763,12 @@ els.highlightCategorySelect?.addEventListener("change", syncSelectionHighlightFo
 els.selectionHighlightForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   addActiveSelectionHighlight().catch((error) => showToast(error.message || String(error)));
+});
+
+document.addEventListener("copy", (event) => {
+  if (!isEditableTarget(event.target)) {
+    copyActiveSelection(event);
+  }
 });
 
 document.addEventListener("mousedown", (event) => {
