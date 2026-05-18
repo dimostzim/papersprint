@@ -37,6 +37,7 @@ INITIAL_AUTHOR_START_RE = re.compile(
 )
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 YEAR_RE = re.compile(r"\b(19\d{2}|20[0-2]\d)\b")
+AUTHOR_PARTICLES = {"de", "der", "van", "von"}
 NON_AUTHOR_WORDS = {
     "Appendix",
     "Algorithm",
@@ -117,7 +118,7 @@ MAX_CONTEXTS_PER_CITATION = 64
 MAX_REFERENCE_CHARS = 1400
 MAX_CONTEXT_CHARS = 700
 MAX_RECTS_PER_CITATION_CONTEXT = 32
-CITATION_VERSION = 9
+CITATION_VERSION = 10
 
 
 def extract_citations(extracted: ExtractedPaper) -> list[dict[str, Any]]:
@@ -709,8 +710,8 @@ def add_author_year_context(
     if not first_author or not year or not looks_like_inline_author(first_author):
         return
 
+    marker, first_author = expand_marker_author_particle(page_text, start, end, first_author)
     key = author_year_key(first_author, year)
-    marker = page_text[start:end].strip()
     context_sentence = context_around_match(page_text, start, end)
     seen_key = (key, marker, context_sentence)
     if seen_key in seen:
@@ -731,6 +732,21 @@ def add_author_year_context(
             "label": author_year_label(first_author, second_author, bool(match.group("etal")), year),
         }
     )
+
+
+def expand_marker_author_particle(page_text: str, start: int, end: int, first_author: str) -> tuple[str, str]:
+    marker = page_text[start:end].strip()
+    prefix = page_text[max(0, start - 32) : start]
+    match = re.search(r"\b(?P<particle>[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,12})\s+$", prefix)
+    if not match:
+        return marker, first_author
+
+    particle = match.group("particle").strip()
+    if author_key_text(particle) not in AUTHOR_PARTICLES:
+        return marker, first_author
+
+    expanded_marker = page_text[match.start("particle") + max(0, start - 32) : end].strip()
+    return expanded_marker, f"{particle} {first_author}"
 
 
 def looks_like_inline_author(value: str) -> bool:
@@ -773,7 +789,7 @@ def reference_author_year_keys(reference: dict[str, Any]) -> list[str]:
     author_parts = first_author.split()
     if len(author_parts) > 1:
         keys.append(author_year_key(author_parts[-1], year))
-        if author_key_text(author_parts[0]) in {"de", "der", "van", "von"}:
+        if author_key_text(author_parts[0]) in AUTHOR_PARTICLES:
             keys.append(author_year_key(" ".join(author_parts[1:]), year))
 
     unique_keys = []

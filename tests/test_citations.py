@@ -286,6 +286,24 @@ def test_extract_citations_resolves_author_particles_from_inline_short_form():
     assert all(citation["resolved"] for citation in citations)
 
 
+def test_extract_citations_includes_author_particle_in_inline_marker():
+    extracted = extracted_from_pages(
+        "The method improves earlier CLIP methods (Van Nostrand et al. 2016).",
+        (
+            "References\n"
+            "Van Nostrand E, Pratt G, Shishkin A et al. Robust transcriptome wide "
+            "discovery of RNA-binding protein binding sites with enhanced CLIP "
+            "(eCLIP). Nat Methods 2016;13:508-14."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "Van Nostrand et al. 2016"
+    assert citations[0]["contexts"][0]["marker"] == "Van Nostrand et al. 2016"
+    assert citations[0]["contexts"][0]["first_author"] == "Van Nostrand"
+
+
 def test_extract_citations_keeps_many_author_year_contexts():
     body = " ".join(
         f"Result {index} follows prior work (Hejret et al. 2023)."
@@ -463,6 +481,33 @@ def test_ground_citation_rects_spans_author_with_missing_final_letter(tmp_path):
 
     citation_rect = fitz.Rect(grounded[0]["contexts"][0]["rects"][0])
     assert citation_rect.x0 <= author_rect.x0
+    assert citation_rect.x1 >= year_rect.x1
+
+
+def test_ground_citation_rects_includes_author_particle(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=200)
+    page.insert_text((40, 60), "The method improves earlier CLIP methods (Van Nostrand et al. 2016).")
+    particle_rect = page.search_for("Van")[0]
+    year_rect = page.search_for("2016")[0]
+    doc.save(pdf_path)
+    doc.close()
+
+    extracted = extracted_from_pages(
+        "The method improves earlier CLIP methods (Van Nostrand et al. 2016).",
+        (
+            "References\n"
+            "Van Nostrand E, Pratt G, Shishkin A et al. Robust transcriptome wide "
+            "discovery of RNA-binding protein binding sites with enhanced CLIP "
+            "(eCLIP). Nat Methods 2016;13:508-14."
+        ),
+    )
+
+    grounded = ground_citation_rects(pdf_path, extract_citations(extracted))
+
+    citation_rect = fitz.Rect(grounded[0]["contexts"][0]["rects"][0])
+    assert citation_rect.x0 <= particle_rect.x0
     assert citation_rect.x1 >= year_rect.x1
 
 
