@@ -667,7 +667,8 @@ h2 {
   user-select: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
-  z-index: 1;
+  z-index: 3;
+  pointer-events: none;
 }
 
 .text-layer span,
@@ -703,18 +704,18 @@ h2 {
   position: absolute;
   border-radius: 3px;
   mix-blend-mode: multiply;
-  opacity: 0.48;
+  opacity: 0.3;
   outline: 1px solid var(--highlight-outline);
   pointer-events: auto;
   cursor: pointer;
 }
 
 .highlight-rect:hover {
-  opacity: 0.72;
+  opacity: 0.46;
 }
 
 .highlight-rect.active {
-  opacity: 0.78;
+  opacity: 0.58;
   outline: 2px solid var(--accent);
 }
 
