@@ -13,6 +13,10 @@ from .paper_processing import ExtractedPaper, normalize_text
 PAGE_IMAGE_ZOOM = 1.6
 FIGURE_IMAGE_ZOOM = 2.4
 FIGURE_TYPES = {"figure", "table", "plot", "diagram", "screenshot", "equation", "other"}
+VISUAL_CUE_RE = re.compile(
+    r"\b(?:fig(?:ure)?\.?|tables?|schemes?|diagrams?|plots?)\s*(?:s?\d+|[ivxlcdm]+|[a-z])\b",
+    re.IGNORECASE,
+)
 
 
 def int_env(name: str, default: int) -> int:
@@ -25,6 +29,59 @@ def int_env(name: str, default: int) -> int:
 def figure_directory(figures_dir: Path, paper_id: str) -> Path:
     safe_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", paper_id)
     return figures_dir / safe_id
+
+
+def page_text_has_visual_cue(text: str) -> bool:
+    return bool(VISUAL_CUE_RE.search(normalize_text(text)))
+
+
+def page_has_pdf_visuals(page: fitz.Page) -> bool:
+    page_area = max(float(page.rect.width * page.rect.height), 1.0)
+    if page.get_images(full=True):
+        return True
+
+    try:
+        if page.find_tables().tables:
+            return True
+    except (AttributeError, RuntimeError, ValueError):
+        pass
+
+    try:
+        drawings = page.get_drawings()
+    except RuntimeError:
+        return False
+
+    for drawing in drawings:
+        rect = drawing.get("rect")
+        if rect and float(rect.width * rect.height) >= page_area * 0.02:
+            return True
+    return len(drawings) >= 12
+
+
+def visual_candidate_pages(pdf_path: Path, pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text_candidates = {
+        int(page.get("page_number", 0))
+        for page in pages
+        if page_text_has_visual_cue(str(page.get("text", "")))
+    }
+    structural_candidates: set[int] = set()
+
+    try:
+        doc = fitz.open(pdf_path)
+    except (RuntimeError, fitz.FileDataError, fitz.EmptyFileError):
+        doc = None
+
+    if doc:
+        try:
+            for page in pages:
+                page_number = int(page.get("page_number", 0))
+                if 1 <= page_number <= len(doc) and page_has_pdf_visuals(doc[page_number - 1]):
+                    structural_candidates.add(page_number)
+        finally:
+            doc.close()
+
+    candidate_numbers = text_candidates | structural_candidates
+    return [page for page in pages if int(page.get("page_number", 0)) in candidate_numbers]
 
 
 def render_page_image(pdf_path: Path, page_number: int, output_path: Path) -> None:
@@ -168,9 +225,16 @@ def analyze_figures(
     figures = []
     provider_used = "unknown"
 
-    pages = extracted.pages[:max_pages]
+    inspected_pages = extracted.pages[:max_pages]
     if len(extracted.pages) > max_pages:
         warnings.append(f"Figure analysis inspected the first {max_pages} pages only.")
+
+    pages = visual_candidate_pages(pdf_path, inspected_pages)
+    skipped_pages = len(inspected_pages) - len(pages)
+    if skipped_pages > 0:
+        warnings.append(f"Figure analysis skipped {skipped_pages} pages without figure/table signals.")
+    if not pages:
+        warnings.append("No pages with figure/table signals were detected.")
 
     for page in pages:
         if len(figures) >= max_figures:

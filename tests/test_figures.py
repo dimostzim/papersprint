@@ -1,6 +1,14 @@
 import fitz
 
-from app.figures import coerce_bbox_pct, crop_figure_image, normalize_figure_items, render_page_image
+from app.figures import (
+    analyze_figures,
+    coerce_bbox_pct,
+    crop_figure_image,
+    normalize_figure_items,
+    render_page_image,
+    visual_candidate_pages,
+)
+from app.paper_processing import ExtractedPaper
 
 
 def test_coerce_bbox_pct_clamps_and_orders_values():
@@ -53,3 +61,54 @@ def test_render_page_and_crop_figure_images(tmp_path):
     assert crop_image.exists()
     assert page_image.stat().st_size > 0
     assert crop_image.stat().st_size > 0
+
+
+def test_visual_candidate_pages_uses_text_and_pdf_structure(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    doc.new_page(width=240, height=240).insert_text((40, 40), "Plain introduction page")
+    doc.new_page(width=240, height=240).insert_text((40, 40), "Figure 1: Benchmark result")
+    visual_page = doc.new_page(width=240, height=240)
+    visual_page.draw_rect(fitz.Rect(40, 70, 200, 190), color=(0, 0, 0), width=1)
+    doc.save(pdf_path)
+    doc.close()
+    pages = [
+        {"page_number": 1, "text": "Plain introduction page"},
+        {"page_number": 2, "text": "Figure 1: Benchmark result"},
+        {"page_number": 3, "text": "A page with a large vector drawing"},
+    ]
+
+    candidates = visual_candidate_pages(pdf_path, pages)
+
+    assert [page["page_number"] for page in candidates] == [2, 3]
+
+
+def test_analyze_figures_only_calls_vision_for_candidate_pages(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    doc.new_page(width=240, height=240).insert_text((40, 40), "Plain introduction page")
+    doc.new_page(width=240, height=240).insert_text((40, 40), "Figure 1: Benchmark result")
+    doc.save(pdf_path)
+    doc.close()
+    extracted = ExtractedPaper(
+        "Paper",
+        "",
+        [
+            {"page_number": 1, "text": "Plain introduction page"},
+            {"page_number": 2, "text": "Figure 1: Benchmark result"},
+        ],
+        [],
+    )
+    calls = []
+
+    def fake_analyze_page(page_number, page_text, image_path, provider, api_key=None):
+        calls.append(page_number)
+        return {"provider_used": "test", "figures": []}
+
+    monkeypatch.setattr("app.figures.analyze_page_figures", fake_analyze_page)
+
+    result = analyze_figures(pdf_path, extracted, "paper-1", tmp_path / "figures", "codex")
+
+    assert calls == [2]
+    assert result["figures"] == []
+    assert "skipped 1 pages" in result["figure_warnings"][0]
