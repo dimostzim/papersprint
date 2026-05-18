@@ -69,6 +69,8 @@ const els = {
   paperProvider: document.getElementById("paper-provider"),
   paperTitle: document.getElementById("paper-title"),
   paperOverview: document.getElementById("paper-overview"),
+  backgroundSection: document.getElementById("background-section"),
+  backgroundNotes: document.getElementById("background-notes"),
   takeawaysTab: document.getElementById("takeaways-tab"),
   chatMessages: document.getElementById("chat-messages"),
   chatForm: document.getElementById("chat-form"),
@@ -576,6 +578,7 @@ function clearSelectedPaper() {
   if (els.paperOverview) {
     els.paperOverview.textContent = "";
   }
+  renderBackgroundNotes([]);
   syncPdfZoomControls();
   if (els.highlightCount) {
     els.highlightCount.textContent = "0";
@@ -614,6 +617,7 @@ function renderPaperDetails(paper) {
   if (els.paperOverview) {
     els.paperOverview.textContent = paper.overview || "";
   }
+  renderBackgroundNotes(paper.background_notes || []);
   const highlights = paper.highlights || [];
   if (
     state.activeHighlightFacet !== "all"
@@ -718,6 +722,14 @@ function renderListPanel(target, items) {
       ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
       : `<div class="muted-box">No items</div>`,
   );
+}
+
+function renderBackgroundNotes(notes) {
+  const items = notes || [];
+  els.backgroundSection?.classList.toggle("hidden", !items.length);
+  if (els.backgroundNotes) {
+    renderListPanel(els.backgroundNotes, items);
+  }
 }
 
 function renderHighlights(highlights) {

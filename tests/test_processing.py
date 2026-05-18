@@ -102,6 +102,8 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     prompt = build_analysis_prompt(extracted)
 
     assert "goal|novelty|method|result|limitation" in prompt
+    assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
+    assert "Background notes should define or contextualize important terms" in prompt
     assert "do not optimize for the absolute minimum" in prompt
     assert "Use the novelty label for contribution claims" in prompt
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
@@ -169,6 +171,7 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     extracted = ExtractedPaper("Useful paper", "", [], [])
     payload = {
         "title": "Useful paper",
+        "background_notes": ["RNA interference: A way to reduce target gene expression."],
         "highlights": [
             {"label": "goal", "snippet": str(index), "reason": "reason", "comment": "comment"}
             for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
@@ -178,6 +181,7 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     analysis = normalize_analysis(payload, extracted)
 
     assert len(analysis["highlights"]) == MAX_ANALYSIS_HIGHLIGHTS
+    assert analysis["background_notes"] == ["RNA interference: A way to reduce target gene expression."]
     assert analysis["highlights"][0]["comment"] == "comment"
 
 

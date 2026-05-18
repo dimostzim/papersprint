@@ -365,6 +365,7 @@ def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[s
         base.update(
             {
                 "key_takeaways": paper.get("key_takeaways", []),
+                "background_notes": paper.get("background_notes", []),
                 "read_this_first": paper.get("read_this_first", []),
                 "glossary": paper.get("glossary", []),
                 "highlights": highlights,
@@ -398,6 +399,7 @@ def build_paper_record(
         "analysis_version": ANALYSIS_VERSION,
         "title": analysis.get("title") or extracted.title,
         "overview": analysis.get("overview", ""),
+        "background_notes": analysis.get("background_notes", []),
         "key_takeaways": analysis.get("key_takeaways", []),
         "read_this_first": analysis.get("read_this_first", []),
         "glossary": analysis.get("glossary", []),
@@ -440,6 +442,7 @@ def build_uploaded_paper_record(
         "analysis_version": 0,
         "title": extracted.title or Path(filename).stem,
         "overview": "PDF loaded. Click Analyze to generate takeaways and highlights.",
+        "background_notes": [],
         "key_takeaways": [],
         "read_this_first": [],
         "glossary": [],
@@ -578,6 +581,7 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
     paper.update(
         {
             "overview": "Analysis is running.",
+            "background_notes": [],
             "key_takeaways": [],
             "read_this_first": [],
             "glossary": [],

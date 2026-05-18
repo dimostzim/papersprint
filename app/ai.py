@@ -18,7 +18,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 8
+ANALYSIS_VERSION = 9
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
@@ -94,6 +94,7 @@ Return JSON with exactly this shape:
 {{
   "title": "paper title",
   "overview": "3-5 sentence plain summary",
+  "background_notes": ["3-5 short beginner-friendly notes explaining early terms, acronyms, datasets, or concepts needed to read this paper"],
   "key_takeaways": ["4-7 concrete takeaways"],
   "read_this_first": ["3-5 specific paper areas or excerpts to inspect first"],
   "glossary": [{{"term": "term or acronym", "definition": "short paper-specific definition"}}],
@@ -109,6 +110,7 @@ Return JSON with exactly this shape:
 }}
 
 Highlight requirements:
+- Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
 - Add a highlight only if it changes the reader's understanding of the task, novelty, method, evidence, or claim limitation.
 - Abstract highlights are allowed when they provide useful orientation, especially for goal, novelty, and main result.
@@ -371,6 +373,7 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
     return {
         "title": normalize_text(str(payload.get("title") or extracted.title))[:220],
         "overview": normalize_text(str(payload.get("overview") or "")),
+        "background_notes": list_of_strings("background_notes", 6),
         "key_takeaways": list_of_strings("key_takeaways", 8),
         "read_this_first": list_of_strings("read_this_first", 6),
         "glossary": [
