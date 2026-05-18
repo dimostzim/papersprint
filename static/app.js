@@ -968,8 +968,9 @@ async function renderPdf(paper) {
   const pageHighlights = highlightsByPage(filteredHighlights(paper.highlights || []));
   const pageCitations = citationsByPage(paper.citations);
   const pageSizes = new Map((paper.page_sizes || []).map((page) => [page.page_number, page]));
-  setHtml(els.pdfViewer, "");
 
+  const pages = [];
+  const pageFragment = document.createDocumentFragment();
   for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
     if (token !== state.renderToken) {
       return;
@@ -1004,10 +1005,32 @@ async function renderPdf(paper) {
     const overlay = document.createElement("div");
     overlay.className = "overlay-layer";
     wrapper.appendChild(overlay);
-    els.pdfViewer?.appendChild(wrapper);
+    pageFragment.appendChild(wrapper);
+
+    pages.push({ page, pageNumber, viewport, context, textLayer, overlay });
+  }
+
+  if (token !== state.renderToken) {
+    return;
+  }
+  setHtml(els.pdfViewer, "");
+  els.pdfViewer?.appendChild(pageFragment);
+
+  for (const { page, pageNumber, viewport, context, textLayer, overlay } of pages) {
+    if (token !== state.renderToken) {
+      return;
+    }
 
     await page.render({ canvasContext: context, viewport }).promise;
+    if (token !== state.renderToken) {
+      return;
+    }
+
     await renderTextLayer(page, textLayer, viewport, pageNumber);
+    if (token !== state.renderToken) {
+      return;
+    }
+
     renderPageHighlights(overlay, pageHighlights.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
     renderPageCitations(overlay, pageCitations.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
   }

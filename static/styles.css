@@ -589,20 +589,15 @@ h2 {
 }
 
 .pdf-controls {
-  position: sticky;
-  top: 12px;
-  z-index: 8;
-  width: max-content;
+  height: 38px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 12px 12px 0 auto;
+  gap: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 5px;
-  background: var(--topbar-bg);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(16px);
+  padding: 3px;
+  background: var(--panel);
 }
 
 .pdf-controls .icon-button {
@@ -612,6 +607,11 @@ h2 {
   background: var(--panel);
   color: var(--ink);
   font-weight: 800;
+}
+
+.pdf-controls .icon-button:hover {
+  background: var(--panel);
+  border-color: var(--accent);
 }
 
 .pdf-zoom-label {
