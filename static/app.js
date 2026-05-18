@@ -72,6 +72,7 @@ const els = {
   backgroundSection: document.getElementById("background-section"),
   backgroundNotes: document.getElementById("background-notes"),
   takeawaysTab: document.getElementById("takeaways-tab"),
+  takeawaysResizeHandle: document.getElementById("takeaways-resize-handle"),
   chatMessages: document.getElementById("chat-messages"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
@@ -244,6 +245,45 @@ function startChatPanelResize(event) {
   const onPointerUp = () => {
     els.assistantPanel?.classList.remove("is-resizing");
     els.chatResizeHandle?.releasePointerCapture?.(pointerId);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  };
+
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp, { once: true });
+}
+
+function setTakeawaysHeight(clientY) {
+  if (!els.takeawaysTab) {
+    return;
+  }
+
+  const panelRect = els.takeawaysTab.getBoundingClientRect();
+  const nextHeight = clamp(clientY - panelRect.top, 90, 520);
+  els.takeawaysTab.style.setProperty("--takeaways-panel-height", `${Math.round(nextHeight)}px`);
+}
+
+function currentTakeawaysHeight() {
+  return els.takeawaysTab?.getBoundingClientRect().height || 230;
+}
+
+function startTakeawaysResize(event) {
+  if (!els.takeawaysTab) {
+    return;
+  }
+
+  event.preventDefault();
+  els.takeawaysTab.classList.add("is-resizing");
+  const pointerId = event.pointerId;
+  els.takeawaysResizeHandle?.setPointerCapture?.(pointerId);
+  setTakeawaysHeight(event.clientY);
+
+  const onPointerMove = (moveEvent) => {
+    setTakeawaysHeight(moveEvent.clientY);
+  };
+  const onPointerUp = () => {
+    els.takeawaysTab?.classList.remove("is-resizing");
+    els.takeawaysResizeHandle?.releasePointerCapture?.(pointerId);
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
   };
@@ -2204,6 +2244,18 @@ els.chatResizeHandle?.addEventListener("keydown", (event) => {
   const direction = event.key === "ArrowUp" ? -1 : 1;
   const panelTop = els.assistantPanel?.getBoundingClientRect().top || 0;
   setChatPanelSplit(panelTop + currentSummaryPanelHeight() + direction * 24);
+});
+
+els.takeawaysResizeHandle?.addEventListener("pointerdown", startTakeawaysResize);
+els.takeawaysResizeHandle?.addEventListener("keydown", (event) => {
+  if (!["ArrowUp", "ArrowDown"].includes(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+  const direction = event.key === "ArrowUp" ? -1 : 1;
+  const panelTop = els.takeawaysTab?.getBoundingClientRect().top || 0;
+  setTakeawaysHeight(panelTop + currentTakeawaysHeight() + direction * 24);
 });
 
 loadSettings()
