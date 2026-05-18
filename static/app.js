@@ -730,13 +730,17 @@ function renderHighlights(highlights) {
     els.highlightList,
     highlights
       .map((highlight, index) => {
-      const page = highlight.page_number ? `p. ${highlight.page_number}` : "unplaced";
-      const highlightIndex = highlight.highlightIndex ?? index;
-      const labelId = highlightLabelId(highlight.label);
-      return `
+        const page = highlight.page_number ? `p. ${highlight.page_number}` : "unplaced";
+        const highlightIndex = highlight.highlightIndex ?? index;
+        const labelId = highlightLabelId(highlight.label);
+        const comment = highlight.comment
+          ? `<p class="highlight-comment">${escapeHtml(highlight.comment)}</p>`
+          : "";
+        return `
         <button class="highlight-card" data-highlight-index="${highlightIndex}" type="button">
           <span class="label label-${escapeHtml(labelId)}"${customHighlightStyle(highlight)}>${escapeHtml(highlight.label)}</span>
           <strong>${escapeHtml(highlight.snippet)}</strong>
+          ${comment}
           <small>${escapeHtml(page)} · ${escapeHtml(highlight.reason || "")}</small>
         </button>
       `;
@@ -1082,7 +1086,7 @@ function renderPageHighlights(overlay, highlights, pageSize, viewport) {
       const [x0, y0, x1, y1] = rect;
       const node = document.createElement("div");
       node.className = `highlight-rect label-${labelId}`;
-      node.title = `${highlight.label}: ${highlight.reason || highlight.snippet}`;
+      node.title = `${highlight.label}: ${highlight.comment || highlight.reason || highlight.snippet}`;
       node.dataset.highlightIndex = String(highlight.highlightIndex);
       if (safeHexColor(highlight.color) && color) {
         node.style.background = color;

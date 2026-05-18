@@ -18,7 +18,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 7
+ANALYSIS_VERSION = 8
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
@@ -101,7 +101,8 @@ Return JSON with exactly this shape:
     {{
       "label": "goal|novelty|method|result|limitation",
       "snippet": "one complete sentence copied exactly from the paper text, usually 90-260 characters",
-      "reason": "why this excerpt helps fast comprehension"
+      "reason": "why this excerpt helps fast comprehension",
+      "comment": "short plain-language explanation of what this highlight means and why it matters"
     }}
   ],
   "questions": ["useful follow-up question"]
@@ -129,6 +130,7 @@ Highlight requirements:
 - Avoid generic field-motivation sentences unless they create a concrete methodological decision.
 - Read-this-first items should help a researcher triage the paper: task, method, evidence, limitations, and claim ceiling.
 - Snippets must be exact complete sentences copied from the paper text where possible. Do not include page markers such as [Page 2]. Never end a snippet mid-word or mid-sentence.
+- Each highlight comment should explain the highlighted idea in simpler terms, adding just enough definition or background context for a reader who knows the field lightly. Do not repeat the snippet.
 
 Paper title guess: {extracted.title}
 
@@ -360,6 +362,7 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
             "label": str(item.get("label", "important")),
             "snippet": normalize_highlight_snippet(str(item.get("snippet", ""))),
             "reason": normalize_text(str(item.get("reason", "")))[:500],
+            "comment": normalize_text(str(item.get("comment", "")))[:700],
         }
         for item in highlights[:MAX_ANALYSIS_HIGHLIGHTS]
         if isinstance(item, dict) and item.get("snippet")

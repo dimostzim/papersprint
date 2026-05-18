@@ -497,6 +497,13 @@ h2 {
   line-height: 1.35;
 }
 
+.highlight-comment {
+  margin: 0;
+  color: var(--body-copy);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .paper-card span {
   overflow: hidden;
   color: var(--muted);

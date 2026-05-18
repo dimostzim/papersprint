@@ -107,6 +107,8 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
     assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
     assert "Never end a snippet mid-word or mid-sentence" in prompt
+    assert '"comment": "short plain-language explanation' in prompt
+    assert "Each highlight comment should explain the highlighted idea in simpler terms" in prompt
     assert "Abstract highlights are allowed" in prompt
     assert "include it; otherwise prefer the more specific body sentence" in prompt
     assert "Do not cluster the set in the opening motivation" in prompt
@@ -168,7 +170,7 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     payload = {
         "title": "Useful paper",
         "highlights": [
-            {"label": "goal", "snippet": str(index), "reason": "reason"}
+            {"label": "goal", "snippet": str(index), "reason": "reason", "comment": "comment"}
             for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
         ],
     }
@@ -176,6 +178,7 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     analysis = normalize_analysis(payload, extracted)
 
     assert len(analysis["highlights"]) == MAX_ANALYSIS_HIGHLIGHTS
+    assert analysis["highlights"][0]["comment"] == "comment"
 
 
 def test_normalize_highlight_snippet_does_not_cut_mid_sentence():
