@@ -18,7 +18,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 10
+ANALYSIS_VERSION = 11
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
 REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
@@ -136,7 +136,12 @@ Return JSON with exactly this shape:
   "title": "paper title",
   "overview": "3-5 sentence plain summary",
   "background_notes": ["3-5 short beginner-friendly notes explaining early terms, acronyms, datasets, or concepts needed to read this paper"],
-  "key_takeaways": ["4-7 concrete takeaways with bracketed plain-language clarification when a technical term needs it"],
+  "key_takeaways": [
+    {{
+      "text": "concrete takeaway with bracketed plain-language clarification when a technical term needs it",
+      "evidence_hint": "exact supporting paper sentence or highlight snippet, optional"
+    }}
+  ],
   "not_shown": ["1-3 important things the paper does not show or should not be over-interpreted as showing"],
   "code_availability": ["1-2 notes on whether code, data, models, or reproduction artifacts appear released and usable"],
   "reviewer_questions": ["3-5 concrete questions or clarification requests a critical reviewer would ask"],
@@ -156,6 +161,7 @@ Return JSON with exactly this shape:
 Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
+- For each key takeaway, include an evidence_hint when there is a concise supporting sentence in the paper. Prefer a sentence that is also returned as a highlight so the UI can jump to the proof. Leave evidence_hint empty only when no single sentence supports the takeaway.
 - When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
 - Not-shown items should prevent common over-reading: state what the paper did not demonstrate, did not compare, did not validate, or did not make usable.
 - Code availability should use only paper text. Say when release or usability is unclear.
@@ -433,6 +439,30 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
             return []
         return [normalize_text(str(value)) for value in values[:limit] if normalize_text(str(value))]
 
+    def list_of_summary_items(key: str, limit: int) -> list[str | dict[str, str]]:
+        values = payload.get(key, [])
+        if not isinstance(values, list):
+            return []
+
+        items: list[str | dict[str, str]] = []
+        for value in values[:limit]:
+            if isinstance(value, dict):
+                text = normalize_text(str(value.get("text") or value.get("takeaway") or value.get("summary") or ""))
+                evidence_hint = normalize_highlight_snippet(
+                    str(value.get("evidence_hint") or value.get("evidence") or value.get("evidence_snippet") or "")
+                )
+                if text:
+                    item = {"text": text}
+                    if evidence_hint:
+                        item["evidence_hint"] = evidence_hint
+                    items.append(item)
+                continue
+
+            text = normalize_text(str(value))
+            if text:
+                items.append(text)
+        return items
+
     glossary = payload.get("glossary", [])
     if not isinstance(glossary, list):
         glossary = []
@@ -456,7 +486,7 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
         "title": normalize_text(str(payload.get("title") or extracted.title))[:220],
         "overview": normalize_text(str(payload.get("overview") or "")),
         "background_notes": list_of_strings("background_notes", 6),
-        "key_takeaways": list_of_strings("key_takeaways", 8),
+        "key_takeaways": list_of_summary_items("key_takeaways", 8),
         "not_shown": list_of_strings("not_shown", 4),
         "code_availability": list_of_strings("code_availability", 3),
         "reviewer_questions": list_of_strings("reviewer_questions", 6),
@@ -598,7 +628,7 @@ Overview:
 {paper.get("overview", "")}
 
 Key takeaways:
-{chr(10).join("- " + item for item in paper.get("key_takeaways", [])[:8])}
+{chr(10).join("- " + summary_item_text(item) for item in paper.get("key_takeaways", [])[:8])}
 
 Relevant paper excerpts:
 {excerpt_text}
@@ -671,6 +701,12 @@ def format_figure_context(figure_context: list[dict[str, Any]] | None) -> str:
         lines.append("\n".join(parts))
 
     return "\n\n".join(lines)
+
+
+def summary_item_text(item: Any) -> str:
+    if isinstance(item, dict):
+        return normalize_text(str(item.get("text") or item.get("takeaway") or item.get("summary") or ""))
+    return normalize_text(str(item))
 
 
 def build_selection_explanation_prompt(

@@ -768,9 +768,9 @@ function renderPaperDetails(paper) {
     els.paperOverview.textContent = paper.overview || "";
   }
   renderBackgroundNotes(paper.background_notes || []);
-  renderOptionalSummaryList(els.notShownSection, els.notShownList, paper.not_shown || []);
-  renderOptionalSummaryList(els.codeSection, els.codeList, paper.code_availability || []);
-  renderOptionalSummaryList(els.reviewerSection, els.reviewerQuestions, paper.reviewer_questions || []);
+  renderOptionalSummaryList(els.notShownSection, els.notShownList, paper.not_shown || [], true);
+  renderOptionalSummaryList(els.codeSection, els.codeList, paper.code_availability || [], true);
+  renderOptionalSummaryList(els.reviewerSection, els.reviewerQuestions, paper.reviewer_questions || [], true);
   const highlights = paper.highlights || [];
   if (
     state.activeHighlightFacet !== "all"
@@ -791,7 +791,7 @@ function renderPaperDetails(paper) {
   } else if (paper.analysis_status === "error") {
     renderListPanel(els.takeawaysTab, [paper.analysis_error || "Analysis failed."]);
   } else {
-    renderListPanel(els.takeawaysTab, paper.key_takeaways || []);
+    renderListPanel(els.takeawaysTab, paper.key_takeaways || [], { linkEvidence: true });
   }
   renderHighlightFilters(highlights);
   renderHighlights(visibleHighlights);
@@ -868,13 +868,112 @@ function renderHighlightFilters(highlights) {
   });
 }
 
-function renderListPanel(target, items) {
+function summaryItemText(item) {
+  if (item && typeof item === "object") {
+    return String(item.text || item.takeaway || item.summary || "").trim();
+  }
+  return String(item || "").trim();
+}
+
+function summaryItemEvidenceHint(item) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+  return String(item.evidence_hint || item.evidence || item.evidence_snippet || "").trim();
+}
+
+const SUMMARY_STOP_WORDS = new Set([
+  "about",
+  "after",
+  "also",
+  "because",
+  "before",
+  "being",
+  "between",
+  "could",
+  "from",
+  "into",
+  "paper",
+  "show",
+  "shows",
+  "that",
+  "their",
+  "there",
+  "these",
+  "this",
+  "through",
+  "using",
+  "with",
+  "would",
+]);
+
+function summaryTokens(value) {
+  return new Set(
+    String(value || "")
+      .toLowerCase()
+      .match(/[a-z][a-z0-9-]{2,}/g)
+      ?.filter((token) => !SUMMARY_STOP_WORDS.has(token)) || [],
+  );
+}
+
+function summaryEvidenceScore(item, highlight) {
+  const evidenceHint = summaryItemEvidenceHint(item);
+  const text = summaryItemText(item);
+  const highlightText = [highlight.snippet, highlight.comment, highlight.reason].filter(Boolean).join(" ");
+  if (evidenceHint && highlight.snippet?.toLowerCase().includes(evidenceHint.toLowerCase().slice(0, 80))) {
+    return 1;
+  }
+
+  const itemTokens = summaryTokens([evidenceHint, text].filter(Boolean).join(" "));
+  const highlightTokens = summaryTokens(highlightText);
+  if (!itemTokens.size || !highlightTokens.size) {
+    return 0;
+  }
+
+  let shared = 0;
+  for (const token of itemTokens) {
+    if (highlightTokens.has(token)) {
+      shared += 1;
+    }
+  }
+  return shared / itemTokens.size;
+}
+
+function evidenceHighlightIndexForItem(item) {
+  const highlights = state.selectedPaper?.highlights || [];
+  let bestIndex = null;
+  let bestScore = 0;
+  highlights.forEach((highlight, index) => {
+    if (!highlight.page_number || !highlight.rects?.length) {
+      return;
+    }
+    const score = summaryEvidenceScore(item, highlight);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestScore >= 0.18 ? bestIndex : null;
+}
+
+function renderListPanel(target, items, options = {}) {
+  const values = (items || []).filter((item) => summaryItemText(item));
   setHtml(
     target,
-    items.length
-      ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    values.length
+      ? `<ul>${values.map((item) => {
+        const text = summaryItemText(item);
+        const highlightIndex = options.linkEvidence ? evidenceHighlightIndexForItem(item) : null;
+        const evidenceButton = highlightIndex === null
+          ? ""
+          : `<button class="summary-proof-button" data-summary-highlight-index="${highlightIndex}" type="button">Text</button>`;
+        return `<li class="${evidenceButton ? "has-proof" : ""}"><span>${escapeHtml(text)}</span>${evidenceButton}</li>`;
+      }).join("")}</ul>`
       : `<div class="muted-box">No items</div>`,
   );
+  target?.querySelectorAll("[data-summary-highlight-index]").forEach((button) => {
+    button.addEventListener("click", () => jumpToHighlight(Number(button.dataset.summaryHighlightIndex)));
+  });
 }
 
 function renderBackgroundNotes(notes) {
@@ -885,11 +984,11 @@ function renderBackgroundNotes(notes) {
   }
 }
 
-function renderOptionalSummaryList(section, target, items) {
+function renderOptionalSummaryList(section, target, items, linkEvidence = false) {
   const values = items || [];
   section?.classList.toggle("hidden", !values.length);
   if (target) {
-    renderListPanel(target, values);
+    renderListPanel(target, values, { linkEvidence });
   }
 }
 
@@ -1102,6 +1201,7 @@ function citationForGroup(group) {
 }
 
 function selectHighlight(highlightIndex) {
+  state.activeHighlightIndex = highlightIndex;
   els.highlightList?.querySelectorAll(".highlight-card").forEach((node) => node.classList.remove("active"));
   els.pdfViewer?.querySelectorAll(".highlight-rect").forEach((node) => node.classList.remove("active"));
   const card = els.highlightList?.querySelector(`[data-highlight-index="${highlightIndex}"]`);
@@ -1112,6 +1212,22 @@ function selectHighlight(highlightIndex) {
   els.pdfViewer?.querySelectorAll(`[data-highlight-index="${highlightIndex}"]`).forEach((node) => {
     node.classList.add("active");
   });
+}
+
+function jumpToHighlight(highlightIndex) {
+  const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
+  if (!highlight) {
+    return;
+  }
+  selectHighlight(highlightIndex);
+  const rect = els.pdfViewer?.querySelector(`[data-highlight-index="${highlightIndex}"]`);
+  if (rect) {
+    rect.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    return;
+  }
+  if (highlight.page_number) {
+    jumpToPage(highlight.page_number);
+  }
 }
 
 function jumpToPage(pageNumber) {

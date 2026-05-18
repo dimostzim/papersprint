@@ -109,7 +109,9 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "problem|solution|novelty|method|benchmarking|result|ablation|compute|tradeoff|limitation|failure" in prompt
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
+    assert '"evidence_hint": "exact supporting paper sentence or highlight snippet, optional"' in prompt
     assert "Key takeaways should be understandable to a researcher outside this exact subfield" in prompt
+    assert "For each key takeaway, include an evidence_hint" in prompt
     assert '"not_shown": ["1-3 important things' in prompt
     assert '"code_availability": ["1-2 notes' in prompt
     assert '"reviewer_questions": ["3-5 concrete questions' in prompt
@@ -193,6 +195,12 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
         "not_shown": ["The paper does not test clinical deployment."],
         "code_availability": ["Code release is unclear from the provided text."],
         "reviewer_questions": ["Can the authors release the evaluation scripts?"],
+        "key_takeaways": [
+            {
+                "text": "The method improves benchmark accuracy.",
+                "evidence_hint": "The method improves benchmark accuracy by five points.",
+            }
+        ],
         "highlights": [
             {"label": "problem", "snippet": str(index), "reason": "reason", "comment": "comment"}
             for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
@@ -202,6 +210,12 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     analysis = normalize_analysis(payload, extracted)
 
     assert len(analysis["highlights"]) == MAX_ANALYSIS_HIGHLIGHTS
+    assert analysis["key_takeaways"] == [
+        {
+            "text": "The method improves benchmark accuracy.",
+            "evidence_hint": "The method improves benchmark accuracy by five points.",
+        }
+    ]
     assert analysis["background_notes"] == ["RNA interference: A way to reduce target gene expression."]
     assert analysis["not_shown"] == ["The paper does not test clinical deployment."]
     assert analysis["code_availability"] == ["Code release is unclear from the provided text."]
@@ -244,6 +258,22 @@ def test_build_selection_explanation_prompt_uses_selection_and_page_context():
     assert "Selected text (p. 3):" in prompt
     assert "Semantic Reader" in prompt
     assert "interactive reading tools" in prompt
+
+
+def test_build_chat_prompt_formats_structured_takeaways():
+    prompt = build_chat_prompt(
+        {
+            "title": "Useful paper",
+            "overview": "The paper studies semantic readers.",
+            "key_takeaways": [{"text": "The reader links summaries to evidence.", "evidence_hint": "Exact proof."}],
+        },
+        [{"role": "user", "content": "What is the main takeaway?"}],
+        [],
+        [],
+    )
+
+    assert "- The reader links summaries to evidence." in prompt
+    assert "Exact proof" not in prompt
 
 
 def test_build_chat_prompt_includes_citation_focus():
