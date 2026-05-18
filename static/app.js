@@ -195,6 +195,14 @@ function resizeChatInput() {
   els.chatInput.style.overflowY = els.chatInput.scrollHeight + verticalBorder > maxHeight ? "auto" : "hidden";
 }
 
+function submitChatOnEnter(event) {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  els.chatForm?.requestSubmit();
+}
+
 function setChatPanelSplit(clientY) {
   if (!els.assistantPanel || !els.chatResizeHandle) {
     return;
@@ -2167,6 +2175,7 @@ els.chatForm?.addEventListener("submit", (event) => {
 });
 
 els.chatInput?.addEventListener("input", resizeChatInput);
+els.chatInput?.addEventListener("keydown", submitChatOnEnter);
 resizeChatInput();
 
 els.chatResizeHandle?.addEventListener("pointerdown", startChatPanelResize);
