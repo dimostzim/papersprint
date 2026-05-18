@@ -21,6 +21,7 @@ load_dotenv()
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
 MAX_TAKEAWAY_EXCERPT_CHARS = 1600
+MAX_CITATION_VALIDATION_CONTEXTS = 180
 ANALYSIS_VERSION = 13
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
@@ -88,6 +89,7 @@ def render_prompt(name: str, **values: Any) -> str:
 
 ANALYSIS_SYSTEM = load_prompt("analysis_system.md")
 CHAT_SYSTEM = load_prompt("chat_system.md")
+CITATION_VALIDATION_SYSTEM = load_prompt("citation_validation_system.md")
 FIGURE_SYSTEM = load_prompt("figure_system.md")
 SELECTION_EXPLANATION_SYSTEM = load_prompt("selection_explanation_system.md")
 
@@ -806,6 +808,87 @@ def analyze_paper(
     analysis["provider_used"] = provider_used
     analysis["warnings"] = analysis.get("warnings", [])
     return analysis
+
+
+def build_citation_validation_prompt(citations: list[dict[str, Any]]) -> str:
+    candidates = []
+    for citation in citations:
+        citation_id = str(citation.get("id", "")).strip()
+        if not citation_id:
+            continue
+        for context_index, context in enumerate(citation.get("contexts", [])):
+            candidates.append(
+                {
+                    "citation_id": citation_id,
+                    "context_index": context_index,
+                    "label": citation.get("label", ""),
+                    "marker": context.get("marker", ""),
+                    "page_number": context.get("page_number"),
+                    "sentence": context.get("sentence", ""),
+                    "reference_title": citation.get("title", ""),
+                    "reference_authors": citation.get("authors", ""),
+                    "reference_year": citation.get("year", ""),
+                    "raw_reference": str(citation.get("raw_reference", ""))[:700],
+                    "resolved": bool(citation.get("resolved")),
+                }
+            )
+            if len(candidates) >= MAX_CITATION_VALIDATION_CONTEXTS:
+                return render_prompt(
+                    "citation_validation_user.md",
+                    candidates_json=json.dumps(candidates, ensure_ascii=False),
+                )
+
+    return render_prompt(
+        "citation_validation_user.md",
+        candidates_json=json.dumps(candidates, ensure_ascii=False),
+    )
+
+
+def validate_citations(
+    citations: list[dict[str, Any]],
+    provider: str | None,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> list[dict[str, Any]]:
+    if not any(citation.get("contexts") for citation in citations):
+        return citations
+    if os.getenv("CITATION_AI_VALIDATION", "1").strip().lower() in {"0", "false", "no"}:
+        return citations
+
+    output, _ = run_ai(
+        build_citation_validation_prompt(citations),
+        CITATION_VALIDATION_SYSTEM,
+        choose_provider(provider, api_key),
+        True,
+        api_key,
+        model,
+        reasoning_effort,
+        int(os.getenv("CODEX_CITATION_TIMEOUT_SECONDS", os.getenv("CODEX_TIMEOUT_SECONDS", "180"))),
+    )
+    payload = parse_json_payload(output)
+    rejected = set()
+    for item in payload.get("rejected_contexts", []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            rejected.add((str(item.get("citation_id", "")).strip(), int(item.get("context_index"))))
+        except (TypeError, ValueError):
+            continue
+
+    if not rejected:
+        return citations
+
+    validated = []
+    for citation in citations:
+        citation_id = str(citation.get("id", "")).strip()
+        contexts = [
+            context
+            for index, context in enumerate(citation.get("contexts", []))
+            if (citation_id, index) not in rejected
+        ]
+        validated.append({**citation, "contexts": contexts, "context_count": len(contexts)})
+    return validated
 
 
 def build_figure_prompt(page_number: int, page_text: str) -> str:

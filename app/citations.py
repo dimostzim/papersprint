@@ -16,7 +16,7 @@ BRACKET_REFERENCE_RE = re.compile(r"(?<![A-Za-z0-9])\[(\d{1,4})\]\s+")
 NUMBERED_REFERENCE_RE = re.compile(r"(?m)^\s*(\d{1,4})\.\s+")
 INLINE_CITATION_RE = re.compile(r"\[(\d{1,4}(?:\s*(?:,|;|-|–|—)\s*\d{1,4})*)\]")
 AUTHOR_NAME_PATTERN = r"[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,80}"
-YEAR_PATTERN = r"(?:19|20)\d{2}[a-z]?"
+YEAR_PATTERN = r"(?:19\d{2}|20[0-2]\d)[a-z]?"
 AUTHOR_YEAR_PAREN_RE = re.compile(rf"\((?P<body>[^()]{{0,260}}\b{YEAR_PATTERN}[^()]*)\)")
 AUTHOR_YEAR_ITEM_RE = re.compile(
     rf"\b(?P<first>{AUTHOR_NAME_PATTERN})(?P<etal>\s+et\s+al\.)?"
@@ -28,18 +28,43 @@ AUTHOR_YEAR_NARRATIVE_RE = re.compile(
     rf"(?:\s+and\s+(?P<second>{AUTHOR_NAME_PATTERN}))?"
     rf"(?:(?:\s*\((?P<year_paren>{YEAR_PATTERN})\))|(?:,?\s+(?P<year>{YEAR_PATTERN})\b))"
 )
-AUTHOR_START_RE = re.compile(r"^[^\s,.]+(?:\s+[^\s,.]+)*\s+[A-Z]{1,4}(?:,|\.|\s+et\s+al\.)")
+AUTHOR_INITIALS_PATTERN = r"[A-Z](?:-?[A-Z]){0,3}"
+AUTHOR_START_RE = re.compile(
+    rf"^[^\s,.]+(?:\s+[^\s,.]+)*\s+{AUTHOR_INITIALS_PATTERN}(?:,|\.|\s+et\s+al\.)"
+)
 INITIAL_AUTHOR_START_RE = re.compile(
     rf"^(?:(?:[A-Z]\.|[A-Z]\.-[A-Z]\.)\s*){{1,4}}{AUTHOR_NAME_PATTERN}(?:,|\b)"
 )
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
-YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
+YEAR_RE = re.compile(r"\b(19\d{2}|20[0-2]\d)\b")
 NON_AUTHOR_WORDS = {
     "Appendix",
     "Algorithm",
+    "All",
+    "Also",
+    "Abstract",
+    "As",
+    "At",
+    "Background",
+    "Before",
+    "Between",
+    "By",
+    "Conclusion",
+    "Conclusions",
+    "Data",
+    "Discussion",
     "Equation",
+    "Experiment",
+    "Experiments",
     "Figure",
     "Fig",
+    "For",
+    "From",
+    "Fund",
+    "Funding",
+    "Here",
+    "In",
+    "It",
     "Jan",
     "January",
     "Feb",
@@ -48,6 +73,7 @@ NON_AUTHOR_WORDS = {
     "March",
     "Apr",
     "April",
+    "May",
     "Jun",
     "June",
     "Jul",
@@ -62,8 +88,28 @@ NON_AUTHOR_WORDS = {
     "November",
     "Dec",
     "December",
+    "Introduction",
+    "Method",
+    "Methods",
+    "Result",
+    "Results",
     "Section",
+    "Since",
+    "Supplementary",
     "Table",
+    "The",
+    "There",
+    "These",
+    "This",
+    "Those",
+    "To",
+    "Using",
+    "We",
+    "When",
+    "Where",
+    "While",
+    "With",
+    "Bioinformatics",
 }
 
 MAX_REFERENCES = 250
@@ -71,7 +117,7 @@ MAX_CONTEXTS_PER_CITATION = 64
 MAX_REFERENCE_CHARS = 1400
 MAX_CONTEXT_CHARS = 700
 MAX_RECTS_PER_CITATION_CONTEXT = 32
-CITATION_VERSION = 6
+CITATION_VERSION = 9
 
 
 def extract_citations(extracted: ExtractedPaper) -> list[dict[str, Any]]:
@@ -133,11 +179,10 @@ def build_author_year_citations(
     contexts_by_key: dict[str, list[dict[str, Any]]],
     references: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    references_by_key = {
-        reference_author_year_key(reference): reference
-        for reference in references
-        if reference_author_year_key(reference)
-    }
+    references_by_key = {}
+    for reference in references:
+        for key in reference_author_year_keys(reference):
+            references_by_key.setdefault(key, reference)
 
     citations = []
     used_reference_ids: set[str] = set()
@@ -147,6 +192,8 @@ def build_author_year_citations(
         if reference:
             used_reference_ids.add(str(reference["id"]))
             citation = {**reference, "resolved": True}
+        elif references and not unresolved_author_year_context_is_useful(contexts[0]):
+            continue
         else:
             citation = fallback_author_year_citation(contexts[0], sort_index)
 
@@ -177,6 +224,16 @@ def fallback_author_year_citation(context: dict[str, Any], sort_index: int) -> d
         "raw_reference": "",
         "resolved": False,
     }
+
+
+def unresolved_author_year_context_is_useful(context: dict[str, Any]) -> bool:
+    marker = str(context.get("marker", ""))
+    first_author = str(context.get("first_author", ""))
+    return (
+        looks_like_inline_author(first_author)
+        and first_author not in NON_AUTHOR_WORDS
+        and bool(re.search(r"\bet\s+al\.|\band\b", marker))
+    )
 
 
 def ground_citation_rects(pdf_path: Path, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -260,6 +317,9 @@ def citation_search_variants(
 
 
 def marker_rects_from_words(page: fitz.Page, marker: str) -> list[fitz.Rect]:
+    if is_numeric_bracket_marker(marker):
+        return numeric_marker_rects_from_words(page, marker)
+
     marker_tokens = citation_marker_tokens(marker)
     if not marker_tokens:
         return []
@@ -298,6 +358,70 @@ def marker_rects_from_words(page: fitz.Page, marker: str) -> list[fitz.Rect]:
 def citation_marker_tokens(value: str) -> list[str]:
     normalized = strip_diacritics(clean_citation_text(value)).lower()
     return re.findall(r"[a-z0-9]+", normalized)
+
+
+def is_numeric_bracket_marker(marker: str) -> bool:
+    return bool(INLINE_CITATION_RE.fullmatch(marker.strip()))
+
+
+def numeric_marker_rects_from_words(page: fitz.Page, marker: str) -> list[fitz.Rect]:
+    marker_tokens = citation_marker_tokens(marker)
+    if not marker_tokens:
+        return []
+
+    words = page.get_text("words")
+    word_entries = [
+        {
+            "rect": fitz.Rect(word[:4]),
+            "tokens": citation_marker_tokens(str(word[4])),
+            "raw": str(word[4]),
+            "word_index": index,
+            "block": int(word[5]),
+            "line": int(word[6]),
+        }
+        for index, word in enumerate(words)
+        if citation_marker_tokens(str(word[4]))
+    ]
+    token_entries = [
+        {**entry, "token": token}
+        for entry in word_entries
+        for token in entry["tokens"]
+    ]
+    spans = marker_token_spans(token_entries, marker_tokens)
+    if not spans:
+        return []
+
+    rects: list[fitz.Rect] = []
+    for start, end in spans:
+        matched_entries = token_entries[start:end]
+        if not numeric_marker_span_matches(matched_entries, marker):
+            continue
+
+        rects_by_line: dict[tuple[int, int], fitz.Rect] = {}
+        for entry in matched_entries:
+            key = (entry["block"], entry["line"])
+            rects_by_line[key] = rects_by_line[key] | entry["rect"] if key in rects_by_line else fitz.Rect(entry["rect"])
+        rects.extend(rects_by_line.values())
+    return rects
+
+
+def numeric_marker_span_matches(entries: list[dict[str, Any]], marker: str) -> bool:
+    raw_parts = []
+    seen_word_indices: set[int] = set()
+    for entry in entries:
+        word_index = int(entry["word_index"])
+        if word_index in seen_word_indices:
+            continue
+        seen_word_indices.add(word_index)
+        raw_parts.append(str(entry["raw"]))
+
+    compact_raw = normalize_numeric_marker_text("".join(raw_parts))
+    compact_marker = normalize_numeric_marker_text(marker)
+    return "[" in compact_raw and "]" in compact_raw and compact_marker in compact_raw
+
+
+def normalize_numeric_marker_text(value: str) -> str:
+    return re.sub(r"\s+", "", value).replace("–", "-").replace("—", "-")
 
 
 def marker_token_spans(token_entries: list[dict[str, Any]], marker_tokens: list[str]) -> list[tuple[int, int]]:
@@ -437,8 +561,11 @@ def parse_author_year_references(references_text: str) -> list[dict[str, Any]]:
         entries.append(current)
 
     references = []
-    for index, entry_lines in enumerate(entries[:MAX_REFERENCES], start=1):
-        raw_reference = clean_reference(" ".join(entry_lines))
+    raw_references = []
+    for entry_lines in entries:
+        raw_references.extend(split_author_year_reference_entry(" ".join(entry_lines)))
+
+    for index, raw_reference in enumerate(raw_references[:MAX_REFERENCES], start=1):
         year = extract_year(raw_reference)
         first_author = extract_first_author(raw_reference)
         if not year or not first_author:
@@ -461,6 +588,24 @@ def parse_author_year_references(references_text: str) -> list[dict[str, Any]]:
         )
 
     return references
+
+
+def split_author_year_reference_entry(entry: str) -> list[str]:
+    text = clean_reference(entry)
+    if not text:
+        return []
+
+    starts = [0]
+    for match in re.finditer(r"\.\s+(?=[A-ZÀ-ÖØ-Þ])", text):
+        start = match.end()
+        previous = text[starts[-1] : start]
+        if YEAR_RE.search(previous) and looks_like_author_reference_start(text[start : start + 180]):
+            starts.append(start)
+
+    return [
+        clean_reference(text[start : starts[index + 1] if index + 1 < len(starts) else len(text)])
+        for index, start in enumerate(starts)
+    ]
 
 
 def merge_reference_lines(lines: list[str]) -> list[str]:
@@ -561,7 +706,7 @@ def add_author_year_context(
     first_author = str(match.group("first") or "").strip()
     second_author = str(match.group("second") or "").strip()
     year = str(match.groupdict().get("year") or match.groupdict().get("year_paren") or "").strip()
-    if not first_author or not year or first_author in NON_AUTHOR_WORDS:
+    if not first_author or not year or not looks_like_inline_author(first_author):
         return
 
     key = author_year_key(first_author, year)
@@ -588,6 +733,17 @@ def add_author_year_context(
     )
 
 
+def looks_like_inline_author(value: str) -> bool:
+    name = clean_citation_text(value).strip()
+    if not name or name in NON_AUTHOR_WORDS:
+        return False
+
+    letters = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]", "", name)
+    if len(letters) >= 2 and letters.isupper():
+        return False
+    return bool(re.search(r"[a-zÀ-ÖØ-öø-ÿ]", letters))
+
+
 def context_around_match(text: str, start: int, end: int) -> str:
     left_candidates = [text.rfind(separator, 0, start) for separator in (". ", "? ", "! ")]
     left = max(left_candidates)
@@ -603,11 +759,32 @@ def author_year_key(first_author: str, year: str) -> str:
 
 
 def reference_author_year_key(reference: dict[str, Any]) -> str:
+    keys = reference_author_year_keys(reference)
+    return keys[0] if keys else ""
+
+
+def reference_author_year_keys(reference: dict[str, Any]) -> list[str]:
     first_author = str(reference.get("first_author", "")).strip()
     year = str(reference.get("year", "")).strip()
     if not first_author or not year:
-        return ""
-    return author_year_key(first_author, year)
+        return []
+
+    keys = [author_year_key(first_author, year)]
+    author_parts = first_author.split()
+    if len(author_parts) > 1:
+        keys.append(author_year_key(author_parts[-1], year))
+        if author_key_text(author_parts[0]) in {"de", "der", "van", "von"}:
+            keys.append(author_year_key(" ".join(author_parts[1:]), year))
+
+    unique_keys = []
+    for key in keys:
+        if key and key not in unique_keys:
+            unique_keys.append(key)
+    return unique_keys
+
+
+def citation_has_context(citation: dict[str, Any]) -> bool:
+    return bool(citation.get("contexts"))
 
 
 def author_year_label(first_author: str, second_author: str, et_al: bool, year: str) -> str:
@@ -669,7 +846,7 @@ def author_key_text(value: str) -> str:
 
 def extract_year(raw_reference: str) -> str:
     matches = YEAR_RE.findall(raw_reference)
-    return matches[-1] if matches else ""
+    return matches[0] if matches else ""
 
 
 def guess_reference_authors(raw_reference: str, year: str) -> str:
@@ -692,7 +869,7 @@ def extract_first_author(raw_reference: str) -> str:
     author_segment = extract_author_prefix(raw_reference)
     author_segment = author_segment.split(",", 1)[0]
     author_segment = re.sub(r"\s+et\s+al$", "", author_segment, flags=re.IGNORECASE)
-    author_segment = re.sub(r"\s+[A-Z]{1,4}$", "", author_segment)
+    author_segment = re.sub(rf"\s+{AUTHOR_INITIALS_PATTERN}$", "", author_segment)
     return author_segment.strip()
 
 
@@ -720,7 +897,7 @@ def extract_second_author(raw_reference: str) -> str:
     parts = [part.strip() for part in author_prefix.split(",")]
     if len(parts) < 2:
         return ""
-    second_author = re.sub(r"\s+[A-Z]{1,4}$", "", parts[1]).strip()
+    second_author = re.sub(rf"\s+{AUTHOR_INITIALS_PATTERN}$", "", parts[1]).strip()
     return second_author
 
 

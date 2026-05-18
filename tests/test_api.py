@@ -85,6 +85,185 @@ def test_analyze_preserves_extracted_metadata_while_running(tmp_path, monkeypatc
     assert main.PAPERS["paper-1"]["full_text_chars"] == 120
 
 
+def test_get_paper_file_restores_missing_session_pdf_from_cache(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    cache_papers_dir = tmp_path / "cache-papers"
+    papers_dir.mkdir()
+    cache_papers_dir.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes()
+    digest = main.file_digest(data)
+    (cache_papers_dir / f"{digest}.pdf").write_bytes(data)
+    main.PAPERS["paper-1"] = {
+        "id": "paper-1",
+        "filename": "paper.pdf",
+        "stored_pdf": "paper.pdf",
+        "digest": digest,
+    }
+
+    client = TestClient(main.app)
+    response = client.get("/api/papers/paper-1/file")
+
+    assert response.status_code == 200
+    assert response.content == data
+    assert (papers_dir / "paper.pdf").read_bytes() == data
+
+
+def test_analyze_restores_missing_session_pdf_from_cache(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    cache_papers_dir = tmp_path / "cache-papers"
+    papers_dir.mkdir()
+    cache_papers_dir.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes()
+    digest = main.file_digest(data)
+    (cache_papers_dir / f"{digest}.pdf").write_bytes(data)
+    main.PAPERS["paper-1"] = {
+        "id": "paper-1",
+        "filename": "paper.pdf",
+        "stored_pdf": "paper.pdf",
+        "digest": digest,
+        "title": "Readable paper",
+        "overview": "PDF loaded.",
+        "key_takeaways": [],
+        "read_this_first": [],
+        "glossary": [],
+        "highlights": [],
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": [],
+        "questions": [],
+        "provider_used": "not analyzed",
+        "warnings": [],
+        "page_sizes": [],
+        "sentences": [],
+        "full_text_chars": 120,
+        "analysis_status": "ready",
+        "analysis_error": "",
+    }
+
+    def close_background_task(coroutine):
+        coroutine.close()
+
+    monkeypatch.setattr(main.asyncio, "create_task", close_background_task)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/papers/paper-1/analyze",
+        json={"provider": "codex"},
+    )
+
+    assert response.status_code == 200
+    assert main.PAPERS["paper-1"]["analysis_status"] == "analyzing"
+    assert (papers_dir / "paper.pdf").read_bytes() == data
+
+
+def test_upload_defers_citations_until_analysis(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes("Prior work [1].\nReferences\n[1] A. Reader. 2022. Short Citation. CHI.")
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/upload",
+        files={"file": ("paper.pdf", data, "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["citation_count"] == 0
+    assert payload["citation_status"] == "pending"
+    assert main.PAPERS[payload["id"]]["citations"] == []
+    assert main.PAPERS[payload["id"]]["citation_version"] == 0
+
+
+def test_finish_paper_analysis_generates_citations(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    data = make_pdf_bytes("Prior work [1].\nReferences\n[1] A. Reader. 2022. Short Citation. CHI.")
+    pdf_path = papers_dir / "paper.pdf"
+    pdf_path.write_bytes(data)
+    digest = main.file_digest(data)
+    main.PAPERS["paper-1"] = {
+        "id": "paper-1",
+        "filename": "paper.pdf",
+        "stored_pdf": "paper.pdf",
+        "digest": digest,
+        "title": "Readable paper",
+        "figures": [],
+    }
+
+    def fake_analyze_paper(*args, **kwargs):
+        return {
+            "title": "Readable paper",
+            "overview": "Analyzed.",
+            "background_notes": [],
+            "key_takeaways": [],
+            "not_shown": [],
+            "code_availability": [],
+            "reviewer_questions": [],
+            "read_this_first": [],
+            "glossary": [],
+            "highlights": [],
+            "questions": [],
+            "provider_used": "test",
+            "warnings": [],
+        }
+
+    captured = {}
+
+    def fake_validate_citations(citations, provider, api_key=None, model=None, reasoning_effort=None):
+        captured["provider"] = provider
+        return citations
+
+    monkeypatch.setattr(main, "analyze_paper", fake_analyze_paper)
+    monkeypatch.setattr(main, "validate_citations", fake_validate_citations)
+
+    main.finish_paper_analysis(pdf_path, "paper-1", "paper.pdf", "codex", digest)
+
+    paper = main.PAPERS["paper-1"]
+    assert captured["provider"] == "codex"
+    assert paper["analysis_status"] == "complete"
+    assert paper["citation_status"] == "complete"
+    assert paper["citation_version"] == main.CITATION_VERSION
+    assert paper["citations"][0]["label"] == "[1]"
+    assert paper["citations"][0]["contexts"][0]["marker"] == "[1]"
+    cached_record = json.loads((cache_records_dir / f"{digest}.json").read_text(encoding="utf-8"))
+    assert cached_record["citation_status"] == "complete"
+    assert cached_record["citations"][0]["label"] == "[1]"
+
+
 def test_upload_uses_cached_completed_analysis(tmp_path, monkeypatch):
     papers_dir = tmp_path / "papers"
     figures_dir = tmp_path / "figures"
@@ -150,6 +329,25 @@ def test_upload_uses_cached_completed_analysis(tmp_path, monkeypatch):
     assert main.PAPERS[digest[:12]]["figures"][0]["id"] == "p1-1"
     assert (main.figure_directory(figures_dir, digest[:12]) / "p1-1.jpg").exists()
     assert (papers_dir / f"{digest[:12]}-paper.pdf").exists()
+
+
+def test_public_paper_counts_only_citations_with_contexts():
+    payload = main.public_paper(
+        {
+            "id": "paper-1",
+            "filename": "paper.pdf",
+            "title": "Paper",
+            "highlights": [],
+            "figures": [],
+            "citations": [
+                {"label": "Used", "contexts": [{"marker": "Used 2024"}]},
+                {"label": "Reference only", "contexts": []},
+                {"label": "Missing contexts"},
+            ],
+        }
+    )
+
+    assert payload["citation_count"] == 1
 
 
 def test_upload_refreshes_stale_cached_citations(tmp_path, monkeypatch):

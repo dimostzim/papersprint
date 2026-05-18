@@ -15,8 +15,16 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_model_options, provider_status
-from .citations import CITATION_VERSION, extract_citations, ground_citation_rects
+from .ai import (
+    ANALYSIS_VERSION,
+    analyze_paper,
+    answer_chat,
+    answer_selection_explanation,
+    provider_model_options,
+    provider_status,
+    validate_citations,
+)
+from .citations import CITATION_VERSION, citation_has_context, extract_citations, ground_citation_rects
 from .figures import analyze_figures, ensure_figure_images, figure_directory
 from .paper_processing import extract_pdf, file_digest, find_exact_rects, public_page_sizes, slugify, sort_highlights
 from .web_search import search_web
@@ -116,6 +124,26 @@ def cache_record_path(digest: str) -> Path:
 
 def cache_pdf_path(digest: str) -> Path:
     return CACHE_PAPERS_DIR / f"{digest}.pdf"
+
+
+def paper_pdf_path(paper: dict[str, Any]) -> Path:
+    stored_pdf = str(paper.get("stored_pdf", ""))
+    if not stored_pdf:
+        raise HTTPException(status_code=404, detail="PDF file not found.")
+
+    pdf_path = PAPERS_DIR / stored_pdf
+    if pdf_path.exists():
+        return pdf_path
+
+    digest = str(paper.get("digest", ""))
+    if digest:
+        cached_pdf = cache_pdf_path(digest)
+        if cached_pdf.exists():
+            PAPERS_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(cached_pdf, pdf_path)
+            return pdf_path
+
+    raise HTTPException(status_code=404, detail="PDF file not found.")
 
 
 def cache_figures_path(digest: str) -> Path:
@@ -219,10 +247,29 @@ def write_cache_record(paper: dict[str, Any]) -> None:
         cache_record_path(digest).write_text(json.dumps(paper), encoding="utf-8")
 
 
+def analyze_citations_for_paper(
+    pdf_path: Path,
+    extracted: Any,
+    provider: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> list[dict[str, Any]]:
+    citations = extract_citations(extracted)
+    if provider:
+        try:
+            citations = validate_citations(citations, provider, api_key, model, reasoning_effort)
+        except Exception:
+            pass
+    return ground_citation_rects(pdf_path, citations)
+
+
 def refresh_paper_citations(paper: dict[str, Any], pdf_path: Path) -> None:
     extracted = extract_pdf(pdf_path)
-    paper["citations"] = ground_citation_rects(pdf_path, extract_citations(extracted))
+    paper["citations"] = analyze_citations_for_paper(pdf_path, extracted)
     paper["citation_version"] = CITATION_VERSION
+    paper["citation_status"] = "complete"
+    paper["citation_error"] = ""
 
 
 def cached_paper_from_record(record_path: Path) -> dict[str, Any] | None:
@@ -377,6 +424,7 @@ def ground_clean_highlight(
 
 def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[str, Any]:
     highlights = sort_highlights(paper.get("highlights", []))
+    citations = paper.get("citations", [])
     base = {
         "id": paper["id"],
         "filename": paper["filename"],
@@ -392,7 +440,9 @@ def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[s
         "figure_analysis_error": paper.get("figure_analysis_error", ""),
         "figure_analysis_completed_pages": paper.get("figure_analysis_completed_pages", 0),
         "figure_analysis_total_pages": paper.get("figure_analysis_total_pages", 0),
-        "citation_count": len(paper.get("citations", [])),
+        "citation_count": sum(1 for citation in citations if citation_has_context(citation)),
+        "citation_status": paper.get("citation_status", "complete" if citations else "pending"),
+        "citation_error": paper.get("citation_error", ""),
     }
     if include_details:
         base.update(
@@ -420,19 +470,18 @@ def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[s
     return base
 
 
-def build_paper_record(
+def analyzed_paper_record(
     pdf_path: Path,
     paper_id: str,
     filename: str,
-    provider: str | None,
     digest: str,
-    api_key: str | None = None,
-    model: str | None = None,
-    reasoning_effort: str | None = None,
+    extracted: Any,
+    analysis: dict[str, Any],
+    citations: list[dict[str, Any]],
+    citation_status: str,
+    analysis_status: str,
+    citation_error: str = "",
 ) -> dict[str, Any]:
-    extracted = extract_pdf(pdf_path)
-    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
-    analysis = analyze_paper(pdf_path, extracted, provider, api_key, model, reasoning_effort)
     return {
         "id": paper_id,
         "filename": filename,
@@ -457,7 +506,9 @@ def build_paper_record(
         "figure_analysis_completed_pages": 0,
         "figure_analysis_total_pages": 0,
         "citations": citations,
-        "citation_version": CITATION_VERSION,
+        "citation_version": CITATION_VERSION if citation_status == "complete" else 0,
+        "citation_status": citation_status,
+        "citation_error": citation_error,
         "questions": analysis.get("questions", []),
         "provider_used": analysis.get("provider_used", "unknown"),
         "warnings": analysis.get("warnings", []),
@@ -470,9 +521,25 @@ def build_paper_record(
             for span in extracted.sentence_spans
         ],
         "full_text_chars": len(extracted.full_text),
-        "analysis_status": "complete",
+        "analysis_status": analysis_status,
         "analysis_error": "",
     }
+
+
+def build_paper_record(
+    pdf_path: Path,
+    paper_id: str,
+    filename: str,
+    provider: str | None,
+    digest: str,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    extracted = extract_pdf(pdf_path)
+    analysis = analyze_paper(pdf_path, extracted, provider, api_key, model, reasoning_effort)
+    citations = analyze_citations_for_paper(pdf_path, extracted, provider, api_key, model, reasoning_effort)
+    return analyzed_paper_record(pdf_path, paper_id, filename, digest, extracted, analysis, citations, "complete", "complete")
 
 
 def build_uploaded_paper_record(
@@ -482,7 +549,6 @@ def build_uploaded_paper_record(
     digest: str,
 ) -> dict[str, Any]:
     extracted = extract_pdf(pdf_path)
-    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
     return {
         "id": paper_id,
         "filename": filename,
@@ -490,7 +556,7 @@ def build_uploaded_paper_record(
         "digest": digest,
         "analysis_version": 0,
         "title": extracted.title or Path(filename).stem,
-        "overview": "PDF loaded. Click Analyze to generate takeaways and highlights.",
+        "overview": "PDF loaded. Click Analyze to generate takeaways, highlights, and citations.",
         "background_notes": [],
         "key_takeaways": [],
         "not_shown": [],
@@ -506,8 +572,10 @@ def build_uploaded_paper_record(
         "figure_analysis_error": "",
         "figure_analysis_completed_pages": 0,
         "figure_analysis_total_pages": 0,
-        "citations": citations,
-        "citation_version": CITATION_VERSION,
+        "citations": [],
+        "citation_version": 0,
+        "citation_status": "pending",
+        "citation_error": "",
         "questions": [],
         "provider_used": "not analyzed",
         "warnings": [],
@@ -536,7 +604,8 @@ def finish_paper_analysis(
     reasoning_effort: str | None = None,
 ) -> None:
     try:
-        paper = build_paper_record(pdf_path, paper_id, filename, provider, digest, api_key, model, reasoning_effort)
+        extracted = extract_pdf(pdf_path)
+        analysis = analyze_paper(pdf_path, extracted, provider, api_key, model, reasoning_effort)
     except Exception as error:
         pending = PAPERS.get(paper_id)
         if pending:
@@ -546,6 +615,17 @@ def finish_paper_analysis(
         return
 
     existing = PAPERS.get(paper_id, {})
+    paper = analyzed_paper_record(
+        pdf_path,
+        paper_id,
+        filename,
+        digest,
+        extracted,
+        analysis,
+        [],
+        "analyzing",
+        "analyzing",
+    )
     paper["figures"] = existing.get("figures", [])
     paper["figure_warnings"] = existing.get("figure_warnings", [])
     paper["figure_provider_used"] = existing.get("figure_provider_used", "unknown")
@@ -553,6 +633,21 @@ def finish_paper_analysis(
     paper["figure_analysis_error"] = existing.get("figure_analysis_error", "")
     paper["figure_analysis_completed_pages"] = existing.get("figure_analysis_completed_pages", 0)
     paper["figure_analysis_total_pages"] = existing.get("figure_analysis_total_pages", 0)
+    write_paper(paper)
+
+    try:
+        citations = analyze_citations_for_paper(pdf_path, extracted, provider, api_key, model, reasoning_effort)
+        paper["citations"] = citations
+        paper["citation_version"] = CITATION_VERSION
+        paper["citation_status"] = "complete"
+        paper["citation_error"] = ""
+    except Exception as error:
+        paper["citations"] = []
+        paper["citation_version"] = 0
+        paper["citation_status"] = "error"
+        paper["citation_error"] = str(error)
+
+    paper["analysis_status"] = "complete"
     write_paper(paper)
     cache_paper(paper, pdf_path)
 
@@ -684,9 +779,7 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
     provider = request.provider or "auto"
     if provider not in {"auto", "codex", "openai", "openrouter"}:
         raise HTTPException(status_code=502, detail="The local fallback provider has been removed.")
-    pdf_path = PAPERS_DIR / paper["stored_pdf"]
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF file not found.")
+    pdf_path = paper_pdf_path(paper)
 
     if paper.get("analysis_status") == "analyzing":
         return public_paper(paper, include_details=True)
@@ -694,6 +787,7 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
         paper.get("analysis_status") == "complete"
         and paper.get("highlights")
         and paper.get("analysis_version") == ANALYSIS_VERSION
+        and paper.get("citation_version") == CITATION_VERSION
     ):
         return public_paper(paper, include_details=True)
 
@@ -709,6 +803,9 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
             "glossary": [],
             "highlights": [],
             "questions": [],
+            "citations": [],
+            "citation_status": "analyzing",
+            "citation_error": "",
             "provider_used": "pending",
             "warnings": [],
             "analysis_status": "analyzing",
@@ -741,7 +838,10 @@ def get_paper(paper_id: str):
 @app.put("/api/papers/{paper_id}/highlights")
 def update_paper_highlights(paper_id: str, request: HighlightsUpdateRequest):
     paper = read_paper(paper_id)
-    pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
+    try:
+        pdf_path = paper_pdf_path(paper)
+    except HTTPException:
+        pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
     highlights = [
         ground_clean_highlight(clean, item, pdf_path)
         for item in request.highlights[:120]
@@ -773,9 +873,7 @@ def delete_paper(paper_id: str):
 @app.get("/api/papers/{paper_id}/file")
 def get_paper_file(paper_id: str):
     paper = read_paper(paper_id)
-    pdf_path = PAPERS_DIR / paper["stored_pdf"]
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF file not found.")
+    pdf_path = paper_pdf_path(paper)
     return FileResponse(pdf_path, media_type="application/pdf", filename=paper["filename"])
 
 
@@ -792,9 +890,7 @@ async def analyze_paper_figures(paper_id: str, request: FigureAnalysisRequest):
     if paper.get("figures") and not request.force:
         return figure_analysis_response(paper_id, paper)
 
-    pdf_path = PAPERS_DIR / paper["stored_pdf"]
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF file not found.")
+    pdf_path = paper_pdf_path(paper)
 
     paper.update(
         {
@@ -863,8 +959,8 @@ def get_figure_image(paper_id: str, figure_id: str):
 
     image_file = Path(str(figure.get("image_file", ""))).name
     image_path = figure_directory(FIGURES_DIR, paper_id) / image_file
-    pdf_path = PAPERS_DIR / str(paper.get("stored_pdf", ""))
-    if not image_path.exists() and pdf_path.exists():
+    if not image_path.exists():
+        pdf_path = paper_pdf_path(paper)
         ensure_figure_images(pdf_path, FIGURES_DIR, paper_id, [figure])
         if paper.get("digest"):
             ensure_figure_images(pdf_path, CACHE_FIGURES_DIR, str(paper.get("digest")), [figure])

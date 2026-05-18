@@ -192,6 +192,100 @@ def test_extract_citations_keeps_unresolved_author_year_inline_markers():
     assert citations[0]["contexts"][0]["marker"] == "Feurer et al., 2015"
 
 
+def test_extract_citations_ignores_years_that_are_not_author_year_markers():
+    extracted = extracted_from_pages(
+        "University of Malta, Msida MSD 2080, Malta. In 2013, sequencing got cheaper."
+    )
+
+    assert extract_citations(extracted) == []
+
+
+def test_extract_citations_keeps_real_author_year_when_false_years_are_nearby():
+    extracted = extracted_from_pages(
+        (
+            "University of Malta, Msida MSD 2080, Malta. "
+            "In 2013, sequencing got cheaper. "
+            "CLASH revealed frequent noncanonical binding (Helwak et al. 2013)."
+        ),
+        (
+            "References\n"
+            "Helwak A, Kudla G, Dudnakova T et al. Mapping the human miRNA "
+            "interactome by CLASH reveals frequent noncanonical binding. Cell "
+            "2013;153:654-65."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == ["Helwak et al. 2013"]
+    assert citations[0]["contexts"][0]["marker"] == "Helwak et al. 2013"
+
+
+def test_extract_citations_ignores_month_journal_and_funding_dates_when_references_exist():
+    extracted = extracted_from_pages(
+        (
+            "The article was downloaded on 16 May 2026. "
+            "The footer says Bioinformatics, 2025. "
+            "This work was supported by Fund 2020. "
+            "The real citation is (Helwak et al. 2013)."
+        ),
+        (
+            "References\n"
+            "Helwak A, Kudla G, Dudnakova T et al. Mapping the human miRNA "
+            "interactome by CLASH reveals frequent noncanonical binding. Cell "
+            "2013;153:654-65."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == ["Helwak et al. 2013"]
+
+
+def test_extract_citations_splits_merged_author_year_references():
+    extracted = extracted_from_pages(
+        "Prior datasets include (Chakraborty et al. 2017) and (Chou et al. 2016).",
+        (
+            "References\n"
+            "Chakraborty C, Sharma AR, Sharma G et al. Therapeutic miRNA and "
+            "siRNA: moving from bench to clinic. Mol Ther Nucleic Acids "
+            "2017;8:132-43. Chou C-H, Chang N-W, Shrestha S et al. "
+            "miRTarBase 2016: updates to the experimentally validated "
+            "miRNA-target interactions database. Nucleic Acids Res 2016;44:D239-47."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == [
+        "Chakraborty et al. 2017",
+        "Chou et al. 2016",
+    ]
+    assert all(citation["resolved"] for citation in citations)
+
+
+def test_extract_citations_resolves_author_particles_from_inline_short_form():
+    extracted = extracted_from_pages(
+        "CLIP methods were described by Nostrand et al. 2016 and cardiac work by Rooij and Olson 2012.",
+        (
+            "References\n"
+            "Van Nostrand E, Pratt G, Shishkin A et al. Robust transcriptome wide "
+            "discovery of RNA-binding protein binding sites with enhanced CLIP. "
+            "Nat Methods 2016;13:508-14.\n"
+            "van Rooij E, Olson EN. MicroRNA therapeutics for cardiovascular "
+            "disease: opportunities and obstacles. Nat Rev Drug Discov 2012;11:860-72."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert [citation["label"] for citation in citations] == [
+        "Van Nostrand et al. 2016",
+        "van Rooij 2012",
+    ]
+    assert all(citation["resolved"] for citation in citations)
+
+
 def test_extract_citations_keeps_many_author_year_contexts():
     body = " ".join(
         f"Result {index} follows prior work (Hejret et al. 2023)."
@@ -248,6 +342,38 @@ def test_ground_citation_rects_uses_spacing_variants(tmp_path):
 
     assert citations[0]["contexts"][0]["rects"]
     assert citations[1]["contexts"][0]["rects"]
+
+
+def test_ground_citation_rects_does_not_match_numeric_marker_inside_gene_name(tmp_path):
+    pdf_path = tmp_path / "gene-name.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=220)
+    page.insert_text((40, 60), "Genes on the negative strand include PKD1 and PKD1P4-6.")
+    page.insert_text((40, 100), "The real citation marker is [6].")
+    gene_rect = page.search_for("PKD1P4-6")[0]
+    real_citation_rect = page.search_for("[6]")[0]
+    doc.save(pdf_path)
+    doc.close()
+
+    citations = [
+        {
+            "id": "ref-6",
+            "label": "[6]",
+            "contexts": [
+                {
+                    "page_number": 1,
+                    "marker": "[6]",
+                    "sentence": "The real citation marker is [6].",
+                }
+            ],
+        }
+    ]
+
+    grounded = ground_citation_rects(pdf_path, citations)
+    rects = [fitz.Rect(rect) for rect in grounded[0]["contexts"][0]["rects"]]
+
+    assert any(rect.intersects(real_citation_rect) for rect in rects)
+    assert not any(rect.intersects(gene_rect) for rect in rects)
 
 
 def test_ground_citation_rects_falls_back_to_author_prefix_for_diacritics(tmp_path):
