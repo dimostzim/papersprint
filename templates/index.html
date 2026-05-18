@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=50" />
+    <link rel="stylesheet" href="/static/styles.css?v=51" />
   </head>
   <body class="reader-body">
     <header class="topbar">
@@ -61,6 +61,25 @@
     </header>
 
     <main class="workspace">
+      <button
+        id="left-panel-toggle"
+        class="panel-toggle panel-toggle-left"
+        title="Hide left panel"
+        type="button"
+        aria-label="Hide left panel"
+      >
+        ‹
+      </button>
+      <button
+        id="right-panel-toggle"
+        class="panel-toggle panel-toggle-right"
+        title="Hide right panel"
+        type="button"
+        aria-label="Hide right panel"
+      >
+        ›
+      </button>
+
       <aside class="library-panel">
         <div class="panel-header">
           <h2>Papers</h2>
@@ -187,6 +206,6 @@
     <div id="citation-popover" class="citation-popover hidden"></div>
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/app.js?v=45"></script>
+    <script type="module" src="/static/app.js?v=46"></script>
   </body>
 </html>

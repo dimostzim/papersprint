@@ -56,9 +56,12 @@ const state = {
   pendingCitationContext: null,
   activeHighlightFacet: "all",
   pdfZoom: 1,
+  leftPanelCollapsed: false,
+  rightPanelCollapsed: false,
 };
 
 const els = {
+  workspace: document.querySelector(".workspace"),
   uploadForm: document.getElementById("upload-form"),
   pdfInput: document.getElementById("pdf-input"),
   providerSelect: document.getElementById("provider-select"),
@@ -73,6 +76,8 @@ const els = {
   refreshButton: document.getElementById("refresh-button"),
   paperList: document.getElementById("paper-list"),
   assistantPanel: document.querySelector(".assistant-panel"),
+  leftPanelToggle: document.getElementById("left-panel-toggle"),
+  rightPanelToggle: document.getElementById("right-panel-toggle"),
   chatResizeHandle: document.getElementById("chat-resize-handle"),
   readerPanel: document.querySelector(".reader-panel"),
   readerEmpty: document.getElementById("reader-empty"),
@@ -366,6 +371,27 @@ function syncPdfZoomControls() {
   }
   if (els.pdfZoomInButton) {
     els.pdfZoomInButton.disabled = !hasPaper || state.pdfZoom >= PDF_ZOOM_MAX;
+  }
+}
+
+function syncPanelToggles() {
+  els.workspace?.classList.toggle("left-panel-collapsed", state.leftPanelCollapsed);
+  els.workspace?.classList.toggle("right-panel-collapsed", state.rightPanelCollapsed);
+
+  if (els.leftPanelToggle) {
+    const label = state.leftPanelCollapsed ? "Show left panel" : "Hide left panel";
+    els.leftPanelToggle.textContent = state.leftPanelCollapsed ? "›" : "‹";
+    els.leftPanelToggle.title = label;
+    els.leftPanelToggle.setAttribute("aria-label", label);
+    els.leftPanelToggle.setAttribute("aria-pressed", String(state.leftPanelCollapsed));
+  }
+
+  if (els.rightPanelToggle) {
+    const label = state.rightPanelCollapsed ? "Show right panel" : "Hide right panel";
+    els.rightPanelToggle.textContent = state.rightPanelCollapsed ? "‹" : "›";
+    els.rightPanelToggle.title = label;
+    els.rightPanelToggle.setAttribute("aria-label", label);
+    els.rightPanelToggle.setAttribute("aria-pressed", String(state.rightPanelCollapsed));
   }
 }
 
@@ -2458,6 +2484,16 @@ els.figuresButton?.addEventListener("click", () => {
   openFiguresPage();
 });
 
+els.leftPanelToggle?.addEventListener("click", () => {
+  state.leftPanelCollapsed = !state.leftPanelCollapsed;
+  syncPanelToggles();
+});
+
+els.rightPanelToggle?.addEventListener("click", () => {
+  state.rightPanelCollapsed = !state.rightPanelCollapsed;
+  syncPanelToggles();
+});
+
 els.pdfZoomOutButton?.addEventListener("click", () => {
   setPdfZoom(state.pdfZoom - PDF_ZOOM_STEP).catch((error) => showToast(error.message || String(error)));
 });
@@ -2480,6 +2516,7 @@ els.chatForm?.addEventListener("submit", (event) => {
 
 els.chatInput?.addEventListener("input", resizeChatInput);
 els.chatInput?.addEventListener("keydown", submitChatOnEnter);
+syncPanelToggles();
 resizeChatInput();
 
 els.chatResizeHandle?.addEventListener("pointerdown", startChatPanelResize);
