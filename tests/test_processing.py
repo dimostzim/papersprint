@@ -8,6 +8,7 @@ from app.ai import (
     analyze_page_figures,
     build_analysis_prompt,
     build_chat_prompt,
+    build_figure_prompt,
     build_selection_explanation_prompt,
     choose_provider,
     choose_vision_provider,
@@ -319,6 +320,15 @@ def test_choose_vision_provider_accepts_request_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     assert choose_vision_provider("openai", "sk-test") == "openai"
+
+
+def test_build_figure_prompt_prioritizes_scientific_point():
+    prompt = build_figure_prompt(3, "Figure 2 compares the benchmark results.")
+
+    assert "main scientific point" in prompt
+    assert "not a full inventory of visible details" in prompt
+    assert "incidental layout, colors, icons, or decorative details" in prompt
+    assert "what claim the visual is evidence for" in prompt
 
 
 def test_analyze_page_figures_uses_codex_vision(monkeypatch, tmp_path):
