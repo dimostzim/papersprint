@@ -166,7 +166,7 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
     assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
     assert "Never end an excerpt mid-word or mid-sentence" in prompt
-    assert "Takeaway supporting_excerpt may be longer than a highlight" in prompt
+    assert "Takeaway supporting_excerpt should usually be broader than a single highlight" in prompt
     assert '"comment": "short plain-language explanation' in prompt
     assert "Every returned highlight must include a non-empty comment" in prompt
     assert "Abstract highlights are allowed" in prompt

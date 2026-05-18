@@ -32,7 +32,7 @@ Return JSON with exactly this shape:
 Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
-- For each key takeaway, include a supporting_excerpt when the paper contains a local passage that lets a reader verify the takeaway. Choose the shortest exact copied passage that is enough: it may be one sentence, multiple connected sentences, or a short paragraph. Do not force a fixed length. Leave supporting_excerpt empty only when no local text target supports the takeaway.
+- For each key takeaway, include a supporting_excerpt when the paper contains a local passage that lets a reader verify the takeaway. Choose the shortest exact copied passage with enough surrounding context to re-read the evidence naturally: it may be one sentence, multiple connected sentences, or a short paragraph. Do not force a fixed length. Leave supporting_excerpt empty only when no local text target supports the takeaway.
 - Takeaway supporting_excerpt should often include or overlap one or more returned highlights when those highlights are important evidence for the takeaway, but do not force a highlight link when a separate passage is better evidence.
 - For each highlight, provide a stable id such as h1, h2, h3. When a takeaway depends on returned highlights, put those ids in highlight_ids.
 - When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway and/or supporting_excerpt, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
@@ -68,7 +68,7 @@ Highlight requirements:
 - Avoid generic field-motivation sentences unless they create a concrete methodological decision.
 - Read-this-first items should help a researcher triage the paper: task, method, evidence, limitations, and claim ceiling.
 - Takeaway supporting_excerpt and highlight snippets must be exact copied text from the paper where possible. Do not include page markers such as [Page 2]. Never end an excerpt mid-word or mid-sentence.
-- Takeaway supporting_excerpt may be longer than a highlight when needed for context, but do not quote a whole section or a long run of unrelated introduction. It should feel like the natural evidence passage a researcher would inspect after reading the takeaway.
+- Takeaway supporting_excerpt should usually be broader than a single highlight when local context helps, but do not quote a whole section or a long run of unrelated introduction. It should feel like the natural evidence passage a researcher would inspect after reading the takeaway.
 - Highlight snippets must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
 - Every returned highlight must include a non-empty comment. The comment should explain the highlighted idea in simpler terms, adding just enough definition or background context for a reader who knows the field lightly. Do not repeat the snippet.
 

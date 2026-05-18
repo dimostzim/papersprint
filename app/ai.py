@@ -20,6 +20,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
+MAX_TAKEAWAY_EXCERPT_CHARS = 1600
 ANALYSIS_VERSION = 13
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
@@ -658,6 +659,20 @@ def normalize_highlight_snippet(value: str) -> str:
     return window.rsplit(" ", 1)[0].rstrip(",;:") or window.strip()
 
 
+def normalize_supporting_excerpt(value: str) -> str:
+    excerpt = normalize_text(str(value))
+    if len(excerpt) <= MAX_TAKEAWAY_EXCERPT_CHARS:
+        return excerpt
+
+    window = excerpt[: MAX_TAKEAWAY_EXCERPT_CHARS + 1]
+    sentence_ends = [window.rfind(marker) for marker in (".", "?", "!")]
+    sentence_end = max(sentence_ends)
+    if sentence_end >= MAX_TAKEAWAY_EXCERPT_CHARS * 0.55:
+        return window[: sentence_end + 1].strip()
+
+    return window.rsplit(" ", 1)[0].rstrip(",;:") or window.strip()
+
+
 def normalize_reference_id(value: Any, fallback: str) -> str:
     text = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
     return (text[:48] or fallback).strip("-") or fallback
@@ -679,7 +694,7 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
         for value in values[:limit]:
             if isinstance(value, dict):
                 text = normalize_text(str(value.get("text") or value.get("takeaway") or value.get("summary") or ""))
-                supporting_excerpt = normalize_highlight_snippet(
+                supporting_excerpt = normalize_supporting_excerpt(
                     str(
                         value.get("supporting_excerpt")
                         or value.get("evidence_hint")

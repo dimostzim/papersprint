@@ -1051,9 +1051,10 @@ function renderPaperDetails(paper) {
       linkEvidence: true,
       rowEvidence: true,
       allowFigure: false,
-      showEvidence: true,
-      showHighlightLinks: true,
-      maxTokens: 180,
+      showEvidence: false,
+      showHighlightLinks: false,
+      expandToParagraph: true,
+      maxTokens: 220,
       flash: true,
     });
   }
@@ -1128,7 +1129,7 @@ function renderHighlightFilters(highlights) {
         return;
       }
       renderPaperDetails(state.selectedPaper);
-      await renderPdfPreservingScroll(state.selectedPaper);
+      await refreshReaderAnnotations(state.selectedPaper);
     });
   });
 }
@@ -1657,7 +1658,13 @@ function summaryEvidenceTargetForItem(item, options = {}) {
   }
 
   const highlightIndex = linkedHighlightIndexesForItem(item)[0] ?? null;
-  return highlightIndex === null ? null : { type: "highlight", label: "Text", highlightIndex };
+  if (highlightIndex === null) {
+    return null;
+  }
+
+  const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
+  return textEvidenceTargetForValue(highlight?.snippet || "", { ...options, expandToParagraph: true })
+    || { type: "highlight", label: "Text", highlightIndex };
 }
 
 function renderListPanel(target, items, options = {}) {
@@ -2271,7 +2278,7 @@ async function renderPdfPreservingScroll(paper) {
   restorePdfScrollAnchor(anchor);
 }
 
-function renderPdfFigureOverlays(paper) {
+function renderPdfAnnotationOverlays(paper, options = {}) {
   const pageNodes = Array.from(els.pdfViewer?.querySelectorAll(".pdf-page[data-page-number]") || []);
   if (!pageNodes.length) {
     return false;
@@ -2280,6 +2287,9 @@ function renderPdfFigureOverlays(paper) {
   const readerScrollLeft = els.readerPanel?.scrollLeft || 0;
   const readerScrollTop = els.readerPanel?.scrollTop || 0;
   const pageFigures = figuresByPage(paper.figures || []);
+  const pageHighlights = highlightsByPage(filteredHighlights(paper.highlights || []));
+  const pageCitations = citationsByPage(paper.citations);
+  const pageSizes = new Map((paper.page_sizes || []).map((page) => [page.page_number, page]));
 
   for (const pageNode of pageNodes) {
     const overlay = pageNode.querySelector(".overlay-layer");
@@ -2287,13 +2297,18 @@ function renderPdfFigureOverlays(paper) {
       return false;
     }
 
-    overlay.querySelectorAll(".figure-rect").forEach((node) => node.remove());
+    const removeSelector = options.figuresOnly ? ".figure-rect" : ".figure-rect, .highlight-rect, .citation-rect";
+    overlay.querySelectorAll(removeSelector).forEach((node) => node.remove());
     const pageNumber = Number(pageNode.dataset.pageNumber);
     const viewport = {
       width: pageNode.clientWidth || Number.parseFloat(pageNode.style.width) || 0,
       height: pageNode.clientHeight || Number.parseFloat(pageNode.style.height) || 0,
     };
     renderPageFigures(overlay, pageFigures.get(pageNumber) || [], viewport);
+    if (!options.figuresOnly) {
+      renderPageHighlights(overlay, pageHighlights.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
+      renderPageCitations(overlay, pageCitations.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
+    }
   }
 
   if (els.readerPanel) {
@@ -2301,6 +2316,17 @@ function renderPdfFigureOverlays(paper) {
     els.readerPanel.scrollTop = readerScrollTop;
   }
   return true;
+}
+
+function renderPdfFigureOverlays(paper) {
+  return renderPdfAnnotationOverlays(paper, { figuresOnly: true });
+}
+
+async function refreshReaderAnnotations(paper) {
+  if (renderPdfAnnotationOverlays(paper)) {
+    return;
+  }
+  await renderPdfPreservingScroll(paper);
 }
 
 async function refreshFigureAnnotations(paper) {
@@ -2502,7 +2528,7 @@ async function startSelectedPaperAnalysis(event) {
   });
   setSelectedPaper(paper);
   if (paper.analysis_status === "complete") {
-    await renderPdfPreservingScroll(paper);
+    await refreshReaderAnnotations(paper);
     hideToast();
     startFigureAnalysisAfterText(paper.id);
   } else {
@@ -2527,15 +2553,15 @@ function pollPaperAnalysis(paperId) {
       if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
         return;
       }
-  state.selectedPaper = paper;
-  upsertPaperSummary(paper);
-  renderPaperList();
-  renderPaperDetails(paper);
-  syncPaperActions();
-  if (paper.analysis_status === "analyzing") {
+      state.selectedPaper = paper;
+      upsertPaperSummary(paper);
+      renderPaperList();
+      renderPaperDetails(paper);
+      syncPaperActions();
+      if (paper.analysis_status === "analyzing") {
         pollPaperAnalysis(paperId);
       } else if (paper.analysis_status === "complete") {
-        await renderPdfPreservingScroll(paper);
+        await refreshReaderAnnotations(paper);
         renderPaperDetails(paper);
         hideToast();
         startFigureAnalysisAfterText(paperId);
