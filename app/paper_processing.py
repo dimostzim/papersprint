@@ -304,6 +304,7 @@ def ground_highlights(
                 "label": sanitize_label(item.get("label", "important")),
                 "snippet": snippet,
                 "reason": normalize_text(item.get("reason", "")),
+                "comment": normalize_text(item.get("comment", "")),
                 "page_number": page_number,
                 "rects": rects,
             }

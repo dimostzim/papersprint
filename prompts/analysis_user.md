@@ -8,7 +8,8 @@ Return JSON with exactly this shape:
   "key_takeaways": [
     {
       "text": "concrete takeaway with bracketed plain-language clarification when a technical term needs it",
-      "evidence_hint": "exact supporting paper sentence, figure/table label, or visual reference, optional"
+      "supporting_excerpt": "exact copied paper passage that best supports this takeaway, optional",
+      "highlight_ids": ["ids of returned highlights that support this takeaway, optional"]
     }
   ],
   "not_shown": ["1-3 important things the paper does not show or should not be over-interpreted as showing"],
@@ -18,6 +19,7 @@ Return JSON with exactly this shape:
   "glossary": [{"term": "term or acronym", "definition": "short paper-specific definition"}],
   "highlights": [
     {
+      "id": "h1",
       "label": "problem|solution|novelty|method|benchmarking|result|ablation|hyperparams|tradeoff|limitation|failure",
       "snippet": "one complete sentence copied exactly from the paper text, usually 90-260 characters",
       "reason": "why this excerpt helps fast comprehension",
@@ -30,13 +32,15 @@ Return JSON with exactly this shape:
 Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
-- For each key takeaway, include an evidence_hint when there is a concise supporting sentence, figure/table label, or visual reference in the paper. Do not force it to be one of the returned highlights; the UI can jump to ordinary paper text or figure/table annotations after analysis. Leave evidence_hint empty only when no local evidence target supports the takeaway.
-- When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway and/or evidence_hint, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
+- For each key takeaway, include a supporting_excerpt when the paper contains a local passage that lets a reader verify the takeaway. Choose the shortest exact copied passage that is enough: it may be one sentence, multiple connected sentences, or a short paragraph. Do not force a fixed length. Leave supporting_excerpt empty only when no local text target supports the takeaway.
+- Takeaway supporting_excerpt should often include or overlap one or more returned highlights when those highlights are important evidence for the takeaway, but do not force a highlight link when a separate passage is better evidence.
+- For each highlight, provide a stable id such as h1, h2, h3. When a takeaway depends on returned highlights, put those ids in highlight_ids.
+- When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway and/or supporting_excerpt, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
 - Not-shown items should prevent common over-reading: state what the paper did not demonstrate, did not compare, did not validate, or did not make usable.
 - Code availability should use only paper text. Say when release or usability is unclear.
 - Reviewer questions should be specific requests a reviewer would ask the authors to clarify, test, release, or bound.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
-- Treat all highlight labels as equal priority, but use only labels that have explicit useful evidence in this paper. Do not add computational-paper-specific labels such as benchmarking, hyperparams, ablation, or failure when the paper does not actually contain those details.
+- Treat highlight labels as a vocabulary, not a checklist. Use only labels that have explicit useful evidence in this paper. Do not add computational-paper-specific labels such as benchmarking, hyperparams, ablation, or failure when the paper does not actually contain those details.
 - Add a highlight only if it changes the reader's understanding of the problem, solution, novelty, method, evidence, tradeoff, failure mode, or claim limitation.
 - Abstract highlights are allowed when they provide useful orientation, especially for problem, solution, novelty, and main result.
 - Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, reproducibility details, and limits when they exist.
@@ -63,8 +67,10 @@ Highlight requirements:
 - Prefer passages that define the task, name the paper's motivating failure mode, introduce this paper's intervention, explain the mechanism, define the evaluation/baseline/metric, report the main result, state a tradeoff, give reproducibility details, or bound this paper's claim.
 - Avoid generic field-motivation sentences unless they create a concrete methodological decision.
 - Read-this-first items should help a researcher triage the paper: task, method, evidence, limitations, and claim ceiling.
-- Snippets must be exact complete sentences copied from the paper text where possible. Do not include page markers such as [Page 2]. Never end a snippet mid-word or mid-sentence.
-- Each highlight comment should explain the highlighted idea in simpler terms, adding just enough definition or background context for a reader who knows the field lightly. Do not repeat the snippet.
+- Takeaway supporting_excerpt and highlight snippets must be exact copied text from the paper where possible. Do not include page markers such as [Page 2]. Never end an excerpt mid-word or mid-sentence.
+- Takeaway supporting_excerpt may be longer than a highlight when needed for context, but do not quote a whole section or a long run of unrelated introduction. It should feel like the natural evidence passage a researcher would inspect after reading the takeaway.
+- Highlight snippets must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
+- Every returned highlight must include a non-empty comment. The comment should explain the highlighted idea in simpler terms, adding just enough definition or background context for a reader who knows the field lightly. Do not repeat the snippet.
 
 Paper title guess: {{title}}
 

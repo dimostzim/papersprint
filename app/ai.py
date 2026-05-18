@@ -20,7 +20,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 12
+ANALYSIS_VERSION = 13
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
 REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
@@ -658,6 +658,11 @@ def normalize_highlight_snippet(value: str) -> str:
     return window.rsplit(" ", 1)[0].rstrip(",;:") or window.strip()
 
 
+def normalize_reference_id(value: Any, fallback: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value or "").strip()).strip("-").lower()
+    return (text[:48] or fallback).strip("-") or fallback
+
+
 def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> dict[str, Any]:
     def list_of_strings(key: str, limit: int) -> list[str]:
         values = payload.get(key, [])
@@ -665,22 +670,39 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
             return []
         return [normalize_text(str(value)) for value in values[:limit] if normalize_text(str(value))]
 
-    def list_of_summary_items(key: str, limit: int) -> list[str | dict[str, str]]:
+    def list_of_summary_items(key: str, limit: int, valid_ids: set[str]) -> list[str | dict[str, Any]]:
         values = payload.get(key, [])
         if not isinstance(values, list):
             return []
 
-        items: list[str | dict[str, str]] = []
+        items: list[str | dict[str, Any]] = []
         for value in values[:limit]:
             if isinstance(value, dict):
                 text = normalize_text(str(value.get("text") or value.get("takeaway") or value.get("summary") or ""))
-                evidence_hint = normalize_highlight_snippet(
-                    str(value.get("evidence_hint") or value.get("evidence") or value.get("evidence_snippet") or "")
+                supporting_excerpt = normalize_highlight_snippet(
+                    str(
+                        value.get("supporting_excerpt")
+                        or value.get("evidence_hint")
+                        or value.get("evidence")
+                        or value.get("evidence_snippet")
+                        or ""
+                    )
                 )
                 if text:
-                    item = {"text": text}
-                    if evidence_hint:
-                        item["evidence_hint"] = evidence_hint
+                    item: dict[str, Any] = {"text": text}
+                    if supporting_excerpt:
+                        item["supporting_excerpt"] = supporting_excerpt
+                    raw_highlight_ids = value.get("highlight_ids") or value.get("highlightIds") or []
+                    if isinstance(raw_highlight_ids, str):
+                        raw_highlight_ids = re.split(r"[\s,;]+", raw_highlight_ids)
+                    if isinstance(raw_highlight_ids, list):
+                        highlight_ids = []
+                        for raw_id in raw_highlight_ids:
+                            highlight_id = normalize_reference_id(raw_id, "")
+                            if highlight_id and highlight_id in valid_ids and highlight_id not in highlight_ids:
+                                highlight_ids.append(highlight_id)
+                        if highlight_ids:
+                            item["highlight_ids"] = highlight_ids
                     items.append(item)
                 continue
 
@@ -697,22 +719,36 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
     if not isinstance(highlights, list):
         highlights = []
 
-    normalized_highlights = [
-        {
-            "label": str(item.get("label", "important")),
-            "snippet": normalize_highlight_snippet(str(item.get("snippet", ""))),
-            "reason": normalize_text(str(item.get("reason", "")))[:500],
-            "comment": normalize_text(str(item.get("comment", "")))[:700],
-        }
-        for item in highlights[:MAX_ANALYSIS_HIGHLIGHTS]
-        if isinstance(item, dict) and item.get("snippet")
-    ]
+    normalized_highlights = []
+    used_highlight_ids: set[str] = set()
+    for index, item in enumerate(highlights[:MAX_ANALYSIS_HIGHLIGHTS], start=1):
+        if not isinstance(item, dict) or not item.get("snippet"):
+            continue
+
+        fallback_id = f"h{index}"
+        highlight_id = normalize_reference_id(item.get("id"), fallback_id)
+        if highlight_id in used_highlight_ids:
+            highlight_id = fallback_id
+        while highlight_id in used_highlight_ids:
+            highlight_id = f"{fallback_id}-{len(used_highlight_ids) + 1}"
+        used_highlight_ids.add(highlight_id)
+
+        normalized_highlights.append(
+            {
+                "id": highlight_id,
+                "label": str(item.get("label", "important")),
+                "snippet": normalize_highlight_snippet(str(item.get("snippet", ""))),
+                "reason": normalize_text(str(item.get("reason", "")))[:500],
+                "comment": normalize_text(str(item.get("comment", "")))[:700],
+            }
+        )
+    valid_highlight_ids = {highlight["id"] for highlight in normalized_highlights}
 
     return {
         "title": normalize_text(str(payload.get("title") or extracted.title))[:220],
         "overview": normalize_text(str(payload.get("overview") or "")),
         "background_notes": list_of_strings("background_notes", 6),
-        "key_takeaways": list_of_summary_items("key_takeaways", 8),
+        "key_takeaways": list_of_summary_items("key_takeaways", 8, valid_highlight_ids),
         "not_shown": list_of_strings("not_shown", 4),
         "code_availability": list_of_strings("code_availability", 3),
         "reviewer_questions": list_of_strings("reviewer_questions", 6),

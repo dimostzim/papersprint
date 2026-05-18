@@ -34,6 +34,7 @@ from app.paper_processing import (
     ExtractedPaper,
     clean_pdf_text,
     find_exact_rects,
+    ground_highlights,
     normalize_text,
     score_match,
     search_phrases,
@@ -92,6 +93,30 @@ def test_find_exact_rects_returns_line_level_sentence_rects(tmp_path):
     assert len(rects) < len(sentence.split()) / 2
 
 
+def test_ground_highlights_preserves_comments(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    sentence = "ParaDISM assigns reads only when unambiguous sequence-specific evidence supports one origin."
+    doc = fitz.open()
+    page = doc.new_page(width=360, height=240)
+    page.insert_textbox(fitz.Rect(72, 72, 280, 180), sentence, fontsize=10)
+    doc.save(pdf_path)
+    doc.close()
+
+    highlights = [
+        {
+            "label": "solution",
+            "snippet": sentence,
+            "reason": "Shows the decision rule.",
+            "comment": "The method chooses caution over forced assignment.",
+        }
+    ]
+
+    grounded = ground_highlights(pdf_path, highlights, [])
+
+    assert grounded[0]["comment"] == "The method chooses caution over forced assignment."
+    assert grounded[0]["rects"]
+
+
 def test_parse_json_payload_handles_markdown_fence():
     payload = parse_json_payload('```json\n{"ok": true, "items": [1]}\n```')
     assert payload == {"ok": True, "items": [1]}
@@ -115,9 +140,13 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "problem|solution|novelty|method|benchmarking|result|ablation|hyperparams|tradeoff|limitation|failure" in prompt
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
-    assert '"evidence_hint": "exact supporting paper sentence, figure/table label, or visual reference, optional"' in prompt
+    assert '"supporting_excerpt": "exact copied paper passage that best supports this takeaway, optional"' in prompt
+    assert '"highlight_ids": ["ids of returned highlights that support this takeaway, optional"]' in prompt
+    assert '"id": "h1"' in prompt
     assert "Key takeaways should be understandable to a researcher outside this exact subfield" in prompt
-    assert "For each key takeaway, include an evidence_hint" in prompt
+    assert "For each key takeaway, include a supporting_excerpt" in prompt
+    assert "Do not force a fixed length" in prompt
+    assert "When a takeaway depends on returned highlights" in prompt
     assert '"not_shown": ["1-3 important things' in prompt
     assert '"code_availability": ["1-2 notes' in prompt
     assert '"reviewer_questions": ["3-5 concrete questions' in prompt
@@ -131,14 +160,15 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Use the novelty label for contribution claims" in prompt
     assert "Use the benchmarking label for benchmark construction" in prompt
     assert "Use the hyperparams label for hyperparameters" in prompt
-    assert "Treat all highlight labels as equal priority" in prompt
+    assert "highlight labels as a vocabulary, not a checklist" in prompt
     assert "replace a redundant generic problem/method/result highlight" in prompt
     assert "Use the failure label for reported failure modes" in prompt
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
     assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
-    assert "Never end a snippet mid-word or mid-sentence" in prompt
+    assert "Never end an excerpt mid-word or mid-sentence" in prompt
+    assert "Takeaway supporting_excerpt may be longer than a highlight" in prompt
     assert '"comment": "short plain-language explanation' in prompt
-    assert "Each highlight comment should explain the highlighted idea in simpler terms" in prompt
+    assert "Every returned highlight must include a non-empty comment" in prompt
     assert "Abstract highlights are allowed" in prompt
     assert "include it; otherwise prefer the more specific body sentence" in prompt
     assert "Do not cluster the set in the opening motivation" in prompt
@@ -206,11 +236,15 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
         "key_takeaways": [
             {
                 "text": "The method improves benchmark accuracy.",
-                "evidence_hint": "The method improves benchmark accuracy by five points.",
+                "supporting_excerpt": (
+                    "The method improves benchmark accuracy by five points. "
+                    "This supports the main benchmark takeaway."
+                ),
+                "highlight_ids": ["h1", "missing"],
             }
         ],
         "highlights": [
-            {"label": "problem", "snippet": str(index), "reason": "reason", "comment": "comment"}
+            {"id": f"h{index + 1}", "label": "problem", "snippet": str(index), "reason": "reason", "comment": "comment"}
             for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
         ],
     }
@@ -221,13 +255,18 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     assert analysis["key_takeaways"] == [
         {
             "text": "The method improves benchmark accuracy.",
-            "evidence_hint": "The method improves benchmark accuracy by five points.",
+            "supporting_excerpt": (
+                "The method improves benchmark accuracy by five points. "
+                "This supports the main benchmark takeaway."
+            ),
+            "highlight_ids": ["h1"],
         }
     ]
     assert analysis["background_notes"] == ["RNA interference: A way to reduce target gene expression."]
     assert analysis["not_shown"] == ["The paper does not test clinical deployment."]
     assert analysis["code_availability"] == ["Code release is unclear from the provided text."]
     assert analysis["reviewer_questions"] == ["Can the authors release the evaluation scripts?"]
+    assert analysis["highlights"][0]["id"] == "h1"
     assert analysis["highlights"][0]["comment"] == "comment"
 
 
