@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -18,33 +19,31 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 11
+ANALYSIS_VERSION = 12
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
 REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
 MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"]
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
+PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
-Return valid JSON only. Highlight snippets must be exact short excerpts copied from the paper text whenever possible.
-Do not invent claims that are not supported by the provided paper text.
-Prefer evidence-bound scientific reading: identify the task, failure mode, intervention, mechanism, evaluation, tradeoffs, limitations, and strongest claim supported by the evidence."""
 
-CHAT_SYSTEM = """You are a careful scientific reading assistant.
-Answer from the provided paper context first. If web results are provided, use them only as external context and cite URLs.
-Be concise, concrete, and explicit about uncertainty.
-Calibrate claims to the evidence; distinguish tested results from interpretation."""
+@lru_cache(maxsize=None)
+def load_prompt(name: str) -> str:
+    return (PROMPTS_DIR / name).read_text(encoding="utf-8").strip()
 
-FIGURE_SYSTEM = """You inspect scientific paper page images.
-Return valid JSON only. Identify visual evidence such as figures, plots, diagrams, tables, screenshots, and multi-panel figure groups.
-Do not invent results that are not visible in the image or supported by nearby page text.
-Prioritize the scientific point of each visual over exhaustive visual description.
-Be explicit about uncertainty when labels, axes, legends, or captions are unclear."""
 
-SELECTION_EXPLANATION_SYSTEM = """You explain selected scientific paper terms and phrases in context.
-Use the selected text and nearby page context first.
-Be concise, concrete, and explicit when the context is insufficient.
-Do not invent paper-specific claims that are not supported by the provided context."""
+def render_prompt(name: str, **values: Any) -> str:
+    prompt = load_prompt(name)
+    for key, value in values.items():
+        prompt = prompt.replace(f"{{{{{key}}}}}", str(value))
+    return prompt.strip()
+
+
+ANALYSIS_SYSTEM = load_prompt("analysis_system.md")
+CHAT_SYSTEM = load_prompt("chat_system.md")
+FIGURE_SYSTEM = load_prompt("figure_system.md")
+SELECTION_EXPLANATION_SYSTEM = load_prompt("selection_explanation_system.md")
 
 
 def provider_status() -> dict[str, Any]:
@@ -128,80 +127,7 @@ def choose_provider(requested: str | None, api_key: str | None = None) -> str:
 
 def build_analysis_prompt(extracted: ExtractedPaper) -> str:
     text = format_guided_reading_text(extracted)[:70000]
-    return f"""
-{ANALYSIS_SYSTEM}
-
-Analyze this paper for a fast-reading interface.
-
-Return JSON with exactly this shape:
-{{
-  "title": "paper title",
-  "overview": "3-5 sentence plain summary",
-  "background_notes": ["3-5 short beginner-friendly notes explaining early terms, acronyms, datasets, or concepts needed to read this paper"],
-  "key_takeaways": [
-    {{
-      "text": "concrete takeaway with bracketed plain-language clarification when a technical term needs it",
-      "evidence_hint": "exact supporting paper sentence, figure/table label, or visual reference, optional"
-    }}
-  ],
-  "not_shown": ["1-3 important things the paper does not show or should not be over-interpreted as showing"],
-  "code_availability": ["1-2 notes on whether code, data, models, or reproduction artifacts appear released and usable"],
-  "reviewer_questions": ["3-5 concrete questions or clarification requests a critical reviewer would ask"],
-  "read_this_first": ["3-5 specific paper areas or excerpts to inspect first"],
-  "glossary": [{{"term": "term or acronym", "definition": "short paper-specific definition"}}],
-  "highlights": [
-    {{
-      "label": "problem|solution|novelty|method|benchmarking|result|ablation|compute|tradeoff|limitation|failure",
-      "snippet": "one complete sentence copied exactly from the paper text, usually 90-260 characters",
-      "reason": "why this excerpt helps fast comprehension",
-      "comment": "short plain-language explanation of what this highlight means and why it matters"
-    }}
-  ],
-  "questions": ["useful follow-up question"]
-}}
-
-Highlight requirements:
-- Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
-- Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
-- For each key takeaway, include an evidence_hint when there is a concise supporting sentence, figure/table label, or visual reference in the paper. Do not force it to be one of the returned highlights; the UI can jump to ordinary paper text or figure/table annotations after analysis. Leave evidence_hint empty only when no local evidence target supports the takeaway.
-- When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway and/or evidence_hint, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
-- Not-shown items should prevent common over-reading: state what the paper did not demonstrate, did not compare, did not validate, or did not make usable.
-- Code availability should use only paper text. Say when release or usability is unclear.
-- Reviewer questions should be specific requests a reviewer would ask the authors to clarify, test, release, or bound.
-- Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
-- Add a highlight only if it changes the reader's understanding of the problem, solution, novelty, method, evidence, tradeoff, failure mode, or claim limitation.
-- Abstract highlights are allowed when they provide useful orientation, especially for problem, solution, novelty, and main result.
-- Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, and limits when they exist.
-- If an abstract sentence is the clearest compact statement of the paper's contribution or result, include it; otherwise prefer the more specific body sentence.
-- Do not highlight title, author, affiliation, contact, availability, license, preprint, or header/footer text.
-- Do not cluster the set in the opening motivation; later method, evaluation, result, and this-paper limitation passages are usually more useful.
-- Use the problem label for the task, problem statement, motivating failure mode, or gap that this paper addresses.
-- Use the solution label for the paper's proposed system, model, dataset, workflow, intervention, or main answer to the problem.
-- Use the novelty label for contribution claims: new systems, datasets, benchmarks, architectures, workflows, evaluation framing, or claimed differences from prior work.
-- Use the method label for this paper's data construction, model, system, protocol, evaluation design, or analysis procedure.
-- Use the benchmarking label for benchmark construction, evaluation setup, baselines, metrics, leaderboards, test splits, or head-to-head comparisons.
-- Use the result label for this paper's findings, measured evidence, comparisons, rankings, or empirical interpretations.
-- Use the ablation label for controlled component-removal, sensitivity, or variant studies.
-- Use the compute label for hyperparameters, runtime, hardware, training cost, model size, data scale, or other reproducibility-critical implementation details.
-- Use the tradeoff label for the catch: costs, constraints, assumptions, usability limits, or cases where the solution buys one thing by giving up another.
-- Use the limitation label only for limitations of this paper's own data, method, evaluation, assumptions, claims, or generalizability. Do not label weaknesses of prior work or background motivation as limitation; label those as problem when they define the problem.
-- Use the failure label for reported failure modes, negative cases, error analysis, or situations where the proposed approach breaks down.
-- Prefer a balanced guided skim across relevant labels when those facets are present, but do not force every label or invent missing facets.
-- Stop when the next highlight repeats an idea already covered.
-- Highlights must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
-- Avoid adjacent highlights unless they serve different labels.
-- Spread highlights across introduction, methods/system, evaluation/results, and limitations/discussion when those sections exist.
-- Prefer passages that define the task, name the paper's motivating failure mode, introduce this paper's intervention, explain the mechanism, define the evaluation/baseline/metric, report the main result, state a tradeoff, or bound this paper's claim.
-- Avoid generic field-motivation sentences unless they create a concrete methodological decision.
-- Read-this-first items should help a researcher triage the paper: task, method, evidence, limitations, and claim ceiling.
-- Snippets must be exact complete sentences copied from the paper text where possible. Do not include page markers such as [Page 2]. Never end a snippet mid-word or mid-sentence.
-- Each highlight comment should explain the highlighted idea in simpler terms, adding just enough definition or background context for a reader who knows the field lightly. Do not repeat the snippet.
-
-Paper title guess: {extracted.title}
-
-Paper text:
-{text}
-""".strip()
+    return render_prompt("analysis_user.md", title=extracted.title, text=text)
 
 
 def format_analysis_text(extracted: ExtractedPaper) -> str:
@@ -314,16 +240,12 @@ def run_codex_vision(
     model: str | None = None,
     reasoning_effort: str | None = None,
 ) -> str:
-    image_prompt = f"""
-{FIGURE_SYSTEM}
-
-{prompt}
-
-The page image is this local JPEG file:
-{image_path.resolve()}
-
-Inspect that image directly and return only the requested JSON object.
-""".strip()
+    image_prompt = render_prompt(
+        "codex_vision_user.md",
+        figure_system=FIGURE_SYSTEM,
+        prompt=prompt,
+        image_path=image_path.resolve(),
+    )
     timeout = int(os.getenv("CODEX_FIGURE_TIMEOUT_SECONDS", os.getenv("CODEX_TIMEOUT_SECONDS", "180")))
     return run_codex(image_prompt, timeout, resolve_vision_model(model), reasoning_effort)
 
@@ -533,35 +455,7 @@ def analyze_paper(
 
 
 def build_figure_prompt(page_number: int, page_text: str) -> str:
-    return f"""
-Inspect page {page_number} of this scientific paper.
-
-Nearby extracted page text:
-{page_text[:5000]}
-
-Return JSON with exactly this shape:
-{{
-  "figures": [
-    {{
-      "type": "figure|table|plot|diagram|screenshot|equation|other",
-      "label": "visible label such as Figure 2 or Table 1, or short fallback label",
-      "title": "short descriptive title",
-      "bbox_pct": [x0, y0, x1, y1],
-      "caption": "visible caption or nearby caption text",
-      "explanation": "plain explanation of the main scientific point: what the visual shows, including results, comparisons, variables, or evidence when visible; not a full inventory of visible details",
-      "why_it_matters": "how this visual supports, limits, or clarifies the paper's argument or evidence",
-      "uncertainty": "what may be ambiguous or hard to read"
-    }}
-  ]
-}}
-
-Bounding boxes must be percentages from 0 to 100 relative to the page image: left, top, right, bottom.
-Group multi-panel figures as one figure unless the panels make separate claims.
-Ignore ordinary body-text paragraphs, headers, footers, page numbers, and reference-list entries.
-Include tables if they carry experimental results or comparisons.
-Do not spend space on incidental layout, colors, icons, or decorative details unless they change the scientific interpretation.
-Use the caption and nearby page text to explain what claim the visual is evidence for. Refine smaller details only when they are essential to that claim.
-""".strip()
+    return render_prompt("figure_user.md", page_number=page_number, page_text=page_text[:5000])
 
 
 def analyze_page_figures(
@@ -623,33 +517,18 @@ def build_chat_prompt(
     )
     citation_text = format_citation_context(citation_context)
     figure_text = format_figure_context(figure_context)
-    return f"""
-Paper: {paper.get("title", "Untitled")}
-
-Overview:
-{paper.get("overview", "")}
-
-Key takeaways:
-{chr(10).join("- " + summary_item_text(item) for item in paper.get("key_takeaways", [])[:8])}
-
-Relevant paper excerpts:
-{excerpt_text}
-
-Citation focus:
-{citation_text}
-
-Figure focus:
-{figure_text}
-
-Web results:
-{web_text or "None"}
-
-Conversation:
-{history}
-
-Answer the last user message. Use page numbers for paper evidence, and include URLs when using web results.
-When useful, structure the answer around task, failure mode, intervention, evidence, tradeoff, and claim ceiling.
-""".strip()
+    takeaways_text = "\n".join("- " + summary_item_text(item) for item in paper.get("key_takeaways", [])[:8])
+    return render_prompt(
+        "chat_user.md",
+        title=paper.get("title", "Untitled"),
+        overview=paper.get("overview", ""),
+        key_takeaways=takeaways_text,
+        excerpts=excerpt_text,
+        citation_context=citation_text,
+        figure_context=figure_text,
+        web_results=web_text or "None",
+        history=history,
+    )
 
 
 def format_citation_context(citation_context: dict[str, Any] | None) -> str:
@@ -718,24 +597,14 @@ def build_selection_explanation_prompt(
     page_text: str,
 ) -> str:
     page_label = f"p. {page_number}" if page_number else "unknown page"
-    return f"""
-Paper: {paper.get("title", "Untitled")}
-
-Paper overview:
-{paper.get("overview", "")}
-
-Selected text ({page_label}):
-{normalize_text(selected_text)[:700]}
-
-Nearby page context:
-{normalize_text(page_text)[:5000]}
-
-Explain the selected text for a reader of this paper.
-- If it is a term, acronym, method name, metric, or phrase, define it in paper context.
-- If it is a claim or sentence fragment, explain what it means and why it matters.
-- Keep the answer short enough for a chat panel.
-- Mention uncertainty if the provided context does not define the selection.
-""".strip()
+    return render_prompt(
+        "selection_explanation_user.md",
+        title=paper.get("title", "Untitled"),
+        overview=paper.get("overview", ""),
+        page_label=page_label,
+        selected_text=normalize_text(selected_text)[:700],
+        page_text=normalize_text(page_text)[:5000],
+    )
 
 
 def answer_selection_explanation(

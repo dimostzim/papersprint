@@ -106,7 +106,7 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
 
     prompt = build_analysis_prompt(extracted)
 
-    assert "problem|solution|novelty|method|benchmarking|result|ablation|compute|tradeoff|limitation|failure" in prompt
+    assert "problem|solution|novelty|method|benchmarking|result|ablation|hyperparams|tradeoff|limitation|failure" in prompt
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
     assert '"evidence_hint": "exact supporting paper sentence, figure/table label, or visual reference, optional"' in prompt
@@ -124,7 +124,9 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Use the solution label for the paper's proposed" in prompt
     assert "Use the novelty label for contribution claims" in prompt
     assert "Use the benchmarking label for benchmark construction" in prompt
-    assert "Use the compute label for hyperparameters" in prompt
+    assert "Use the hyperparams label for hyperparameters" in prompt
+    assert "Treat all highlight labels as equal priority" in prompt
+    assert "replace a redundant generic problem/method/result highlight" in prompt
     assert "Use the failure label for reported failure modes" in prompt
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
     assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
@@ -239,7 +241,8 @@ def test_sanitize_label_uses_guided_reading_facets():
     assert sanitize_label("evidence") == "result"
     assert sanitize_label("evaluation") == "benchmarking"
     assert sanitize_label("tradeoff") == "tradeoff"
-    assert sanitize_label("hyperparameters") == "compute"
+    assert sanitize_label("hyperparameters") == "hyperparams"
+    assert sanitize_label("compute") == "hyperparams"
     assert sanitize_label("ablation study") == "ablation"
     assert sanitize_label("failure modes") == "failure"
     assert sanitize_label("definition") == "problem"

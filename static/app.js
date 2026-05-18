@@ -12,7 +12,7 @@ const HIGHLIGHT_FACETS = [
   { id: "benchmarking", label: "Benchmarking" },
   { id: "result", label: "Result" },
   { id: "ablation", label: "Ablation" },
-  { id: "compute", label: "Compute" },
+  { id: "hyperparams", label: "Hyperparams" },
   { id: "tradeoff", label: "Tradeoff" },
   { id: "limitation", label: "Limitation" },
   { id: "failure", label: "Failure" },
@@ -27,11 +27,35 @@ const DEFAULT_HIGHLIGHT_COLORS = {
   benchmarking: "#6fb4e8",
   result: "#ffd36d",
   ablation: "#caa66a",
-  compute: "#8fa0a8",
+  hyperparams: "#8fa0a8",
   tradeoff: "#f0a36f",
   limitation: "#e99797",
   failure: "#d86969",
   important: "#b6bec3",
+};
+
+const HIGHLIGHT_LABEL_ALIASES = {
+  goal: "problem",
+  objective: "problem",
+  task: "problem",
+  approach: "solution",
+  contribution: "novelty",
+  benchmark: "benchmarking",
+  benchmarks: "benchmarking",
+  evaluation: "benchmarking",
+  compute: "hyperparams",
+  computing: "hyperparams",
+  hyperparameter: "hyperparams",
+  hyperparameters: "hyperparams",
+  hardware: "hyperparams",
+  runtime: "hyperparams",
+  "training-cost": "hyperparams",
+  "model-size": "hyperparams",
+  ablations: "ablation",
+  "ablation-study": "ablation",
+  failures: "failure",
+  "failure-mode": "failure",
+  "failure-modes": "failure",
 };
 
 const PDF_ZOOM_MIN = 0.6;
@@ -137,11 +161,21 @@ function escapeHtml(value = "") {
 }
 
 function highlightLabelId(value = "") {
-  return String(value || "important")
+  const id = String(value || "important")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "important";
+  return HIGHLIGHT_LABEL_ALIASES[id] || id;
+}
+
+function highlightLabelText(value = "") {
+  const id = highlightLabelId(value);
+  const facet = HIGHLIGHT_FACETS.find((item) => item.id === id);
+  if (facet) {
+    return facet.label;
+  }
+  return String(value || "highlight").trim() || "highlight";
 }
 
 function safeHexColor(value) {
@@ -872,7 +906,7 @@ function renderPaperDetails(paper) {
 function filteredHighlights(highlights) {
   return (highlights || [])
     .map((highlight, index) => ({ ...highlight, highlightIndex: index }))
-    .filter((highlight) => state.activeHighlightFacet === "all" || highlight.label === state.activeHighlightFacet);
+    .filter((highlight) => state.activeHighlightFacet === "all" || highlightLabelId(highlight.label) === state.activeHighlightFacet);
 }
 
 function highlightCategoryOptions(highlights) {
@@ -885,14 +919,14 @@ function highlightCategoryOptions(highlights) {
     }));
   const seen = new Set(options.map((option) => option.id));
   for (const highlight of highlights || []) {
-    const id = String(highlight.label || "").trim();
+    const id = highlightLabelId(highlight.label);
     if (!id || seen.has(id)) {
       continue;
     }
     seen.add(id);
     options.push({
       id,
-      label: id,
+      label: highlightLabelText(highlight.label),
       color: highlightColor(highlight) || DEFAULT_HIGHLIGHT_COLORS.important,
     });
   }
@@ -906,7 +940,8 @@ function renderHighlightFilters(highlights) {
 
   const counts = new Map();
   for (const highlight of highlights || []) {
-    counts.set(highlight.label, (counts.get(highlight.label) || 0) + 1);
+    const id = highlightLabelId(highlight.label);
+    counts.set(id, (counts.get(id) || 0) + 1);
   }
   const facets = [
     HIGHLIGHT_FACETS[0],
@@ -1191,7 +1226,7 @@ function renderHighlights(highlights) {
           : "";
         return `
         <button class="highlight-card" data-highlight-index="${highlightIndex}" type="button">
-          <span class="label label-${escapeHtml(labelId)}"${customHighlightStyle(highlight)}>${escapeHtml(highlight.label)}</span>
+          <span class="label label-${escapeHtml(labelId)}"${customHighlightStyle(highlight)}>${escapeHtml(highlightLabelText(highlight.label))}</span>
           <strong>${escapeHtml(highlight.snippet)}</strong>
           ${comment}
           <small>${escapeHtml(page)} · ${escapeHtml(highlight.reason || "")}</small>
@@ -1680,7 +1715,7 @@ function renderPageHighlights(overlay, highlights, pageSize, viewport) {
       const [x0, y0, x1, y1] = rect;
       const node = document.createElement("div");
       node.className = `highlight-rect label-${labelId}`;
-      node.title = `${highlight.label}: ${highlight.comment || highlight.reason || highlight.snippet}`;
+      node.title = `${highlightLabelText(highlight.label)}: ${highlight.comment || highlight.reason || highlight.snippet}`;
       node.dataset.highlightIndex = String(highlight.highlightIndex);
       if (safeHexColor(highlight.color) && color) {
         node.style.background = color;
@@ -2408,7 +2443,7 @@ function renderHighlightPopover(highlight) {
     els.highlightPopover,
     `
       <div class="highlight-popover-label">
-        <span class="label label-${escapeHtml(highlightLabelId(highlight?.label))}"${customHighlightStyle(highlight)}>${escapeHtml(highlight?.label || "highlight")}</span>
+        <span class="label label-${escapeHtml(highlightLabelId(highlight?.label))}"${customHighlightStyle(highlight)}>${escapeHtml(highlightLabelText(highlight?.label))}</span>
       </div>
       <button data-explain-highlight type="button">Explain</button>
       <button data-remove-highlight type="button">Remove</button>

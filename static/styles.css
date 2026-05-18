@@ -44,8 +44,8 @@
   --label-result-text: #80570e;
   --label-ablation-bg: rgba(179, 128, 50, 0.2);
   --label-ablation-text: #795115;
-  --label-compute-bg: rgba(92, 107, 116, 0.16);
-  --label-compute-text: #4b5961;
+  --label-hyperparams-bg: rgba(92, 107, 116, 0.16);
+  --label-hyperparams-text: #4b5961;
   --label-tradeoff-bg: rgba(218, 115, 50, 0.18);
   --label-tradeoff-text: #8b471b;
   --label-limitation-bg: rgba(184, 92, 92, 0.18);
@@ -98,8 +98,8 @@ html[data-theme="dark"] {
   --label-result-text: #f3c56f;
   --label-ablation-bg: rgba(197, 148, 72, 0.2);
   --label-ablation-text: #e1b878;
-  --label-compute-bg: rgba(177, 190, 196, 0.16);
-  --label-compute-text: #c5d0d5;
+  --label-hyperparams-bg: rgba(177, 190, 196, 0.16);
+  --label-hyperparams-text: #c5d0d5;
   --label-tradeoff-bg: rgba(239, 147, 84, 0.2);
   --label-tradeoff-text: #f4b58a;
   --label-limitation-bg: rgba(226, 126, 126, 0.2);
@@ -737,9 +737,10 @@ h2 {
   color: var(--label-ablation-text);
 }
 
+.label-hyperparams,
 .label-compute {
-  background: var(--label-compute-bg);
-  color: var(--label-compute-text);
+  background: var(--label-hyperparams-bg);
+  color: var(--label-hyperparams-text);
 }
 
 .label-tradeoff {
@@ -935,6 +936,7 @@ h2 {
   background: #caa66a;
 }
 
+.highlight-rect.label-hyperparams,
 .highlight-rect.label-compute {
   background: #8fa0a8;
 }
