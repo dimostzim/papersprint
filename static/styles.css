@@ -1067,6 +1067,16 @@ h2 {
   animation: takeaway-flash 0.95s ease-out 2;
 }
 
+.summary-hover-rect {
+  background: rgba(255, 211, 109, 0.34);
+  outline-color: var(--accent-strong);
+}
+
+.summary-active-rect {
+  background: rgba(255, 211, 109, 0.4);
+  outline-color: var(--accent-strong);
+}
+
 @keyframes takeaway-flash {
   0% {
     background: rgba(255, 211, 109, 0.42);
@@ -1606,19 +1616,84 @@ h2 {
   border-color: var(--citation-outline);
 }
 
-.chat-message strong {
+.chat-message-role {
   display: block;
   margin-bottom: 6px;
   font-size: 12px;
   color: var(--muted);
 }
 
-.chat-message p {
+.chat-markdown {
   font-size: 13px;
   line-height: 1.5;
 }
 
-.chat-message a {
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown pre,
+.chat-markdown table {
+  margin: 0 0 8px;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 18px;
+}
+
+.chat-markdown li {
+  margin-bottom: 4px;
+}
+
+.chat-markdown blockquote {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 10px;
+  color: var(--muted);
+}
+
+.chat-markdown code {
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--panel);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.chat-markdown pre {
+  overflow: auto;
+  border-radius: 7px;
+  padding: 9px;
+  background: var(--panel);
+}
+
+.chat-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--line);
+  padding: 5px 6px;
+  text-align: left;
+}
+
+.chat-markdown a {
   color: var(--accent-text);
   word-break: break-word;
 }

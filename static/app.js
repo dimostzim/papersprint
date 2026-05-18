@@ -1,7 +1,14 @@
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.es.mjs";
+import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/lib/marked.esm.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
 
 const HIGHLIGHT_FACETS = [
   { id: "all", label: "All" },
@@ -1864,7 +1871,7 @@ function summaryEvidenceTargetForItem(item, options = {}) {
     ? { ...options, allowPageFallback: false, expandToParagraph: false, expandToSentence: false, maxTokens: 140 }
     : { ...options, expandToParagraph: true };
   return textEvidenceTargetForValue(highlight?.snippet || "", highlightOptions)
-    || { type: "highlight", label: "Text", highlightIndex };
+    || { type: "highlight", label: "Text", highlightIndex, flash: Boolean(options.flash) };
 }
 
 function renderListPanel(target, items, options = {}) {
@@ -1920,9 +1927,12 @@ function renderListPanel(target, items, options = {}) {
   });
   target?.querySelectorAll("[data-summary-evidence-index]").forEach((button) => {
     const localIndex = button.dataset.summaryLocalEvidenceIndex;
-    const localTarget = localIndex === undefined ? null : evidenceTargets[Number(localIndex)];
+    let localTarget = localIndex === undefined ? null : evidenceTargets[Number(localIndex)];
     const rowIndex = button.dataset.summaryRowIndex;
-    const jump = () => {
+    const currentTarget = () => {
+      if (specificEvidenceTarget(localTarget)) {
+        return localTarget;
+      }
       if (rowIndex !== undefined) {
         const rowItemIndex = Number(rowIndex);
         const currentItem = values[rowItemIndex]
@@ -1930,20 +1940,35 @@ function renderListPanel(target, items, options = {}) {
           || {
             text: button.dataset.summaryItemText || button.textContent || "",
             evidence_hint: button.dataset.summaryItemEvidence || "",
-          };
-        const currentTarget = summaryEvidenceTargetForItem(currentItem, options);
-        if (currentTarget) {
-          jumpToEvidenceTarget(currentTarget);
-          return;
+        };
+        const resolvedTarget = summaryEvidenceTargetForItem(currentItem, options);
+        if (resolvedTarget) {
+          localTarget = resolvedTarget;
+          return resolvedTarget;
         }
       }
-      if (localTarget) {
-        jumpToEvidenceTarget(localTarget);
+      return localTarget || state.summaryEvidenceTargets[Number(button.dataset.summaryEvidenceIndex)] || null;
+    };
+    const jump = () => {
+      const target = currentTarget();
+      if (target) {
+        jumpToEvidenceTarget(target);
         return;
       }
       jumpToSummaryEvidence(Number(button.dataset.summaryEvidenceIndex));
     };
     button.addEventListener("click", jump);
+    const preview = () => {
+      previewEvidenceTarget(currentTarget());
+    };
+    button.addEventListener("pointerenter", preview);
+    button.addEventListener("mouseenter", preview);
+    button.addEventListener("mouseover", preview);
+    button.addEventListener("pointerleave", clearSelectionPreview);
+    button.addEventListener("mouseleave", clearSelectionPreview);
+    button.addEventListener("mouseout", clearSelectionPreview);
+    button.addEventListener("focus", preview);
+    button.addEventListener("blur", clearSelectionPreview);
     button.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") {
         return;
@@ -1952,6 +1977,46 @@ function renderListPanel(target, items, options = {}) {
       jump();
     });
   });
+}
+
+function specificEvidenceTarget(target) {
+  if (!target) {
+    return false;
+  }
+  if (target.type === "highlight") {
+    return target.highlightIndex !== null && target.highlightIndex !== undefined;
+  }
+  if (target.type === "figure") {
+    return Boolean(target.figureId);
+  }
+  return target.type === "text" && Boolean(target.pageNumber) && Boolean(target.rects?.length);
+}
+
+function previewEvidenceTarget(target) {
+  if (!target) {
+    return;
+  }
+
+  if (target.type === "highlight") {
+    const highlight = (state.selectedPaper?.highlights || [])[target.highlightIndex];
+    if (!highlight?.page_number || !highlight.rects?.length) {
+      return;
+    }
+    showSelectionPreview({
+      pageNumber: highlight.page_number,
+      rects: highlight.rects,
+    }, { className: "summary-hover-rect" });
+    return;
+  }
+
+  if (target.type !== "text" || !target.pageNumber || !target.rects?.length) {
+    return;
+  }
+
+  showSelectionPreview({
+    pageNumber: target.pageNumber,
+    rects: target.rects,
+  }, { className: "summary-hover-rect" });
 }
 
 function renderBackgroundNotes(notes) {
@@ -2284,6 +2349,19 @@ function jumpToEvidenceTarget(target) {
   }
 
   if (target.type === "highlight") {
+    const highlight = (state.selectedPaper?.highlights || [])[target.highlightIndex];
+    if (highlight?.page_number && highlight.rects?.length) {
+      selectHighlight(target.highlightIndex);
+      showSelectionPreview({
+        pageNumber: highlight.page_number,
+        rects: highlight.rects,
+      }, { flash: Boolean(target.flash), className: "summary-active-rect" });
+      const firstRect = els.pdfViewer?.querySelector(".selection-preview-rect");
+      if (firstRect) {
+        scrollReaderNodeIntoView(firstRect);
+        return;
+      }
+    }
     jumpToHighlight(target.highlightIndex);
     return;
   }
@@ -2807,10 +2885,12 @@ function renderChat() {
     article.className = `chat-message ${role}`;
 
     const label = document.createElement("strong");
+    label.className = "chat-message-role";
     label.textContent = role === "user" ? "You" : "Assistant";
 
-    const body = document.createElement("p");
-    appendChatText(body, message.content);
+    const body = document.createElement("div");
+    body.className = "chat-markdown";
+    renderChatMarkdown(body, message.content);
 
     article.append(label, body);
     els.chatMessages.appendChild(article);
@@ -2819,36 +2899,44 @@ function renderChat() {
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
 
-function appendChatText(target, value) {
-  const text = String(value);
-  const urlPattern = /https?:\/\/[^\s<>"']+/g;
-  let cursor = 0;
-
-  for (const match of text.matchAll(urlPattern)) {
-    appendTextSegment(target, text.slice(cursor, match.index));
-
-    const link = document.createElement("a");
-    link.href = match[0];
+function renderChatMarkdown(target, value) {
+  const unsafeHtml = marked.parse(String(value || ""));
+  target.innerHTML = DOMPurify.sanitize(unsafeHtml, {
+    ALLOWED_TAGS: [
+      "a",
+      "blockquote",
+      "br",
+      "code",
+      "del",
+      "em",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "hr",
+      "li",
+      "ol",
+      "p",
+      "pre",
+      "strong",
+      "table",
+      "tbody",
+      "td",
+      "th",
+      "thead",
+      "tr",
+      "ul",
+    ],
+    ALLOWED_ATTR: ["href", "title"],
+  });
+  target.querySelectorAll("a[href]").forEach((link) => {
+    const href = link.getAttribute("href") || "";
+    if (!/^https?:\/\//i.test(href) && !href.startsWith("#")) {
+      link.removeAttribute("href");
+      return;
+    }
     link.target = "_blank";
     link.rel = "noreferrer";
-    link.textContent = match[0];
-    target.appendChild(link);
-
-    cursor = match.index + match[0].length;
-  }
-
-  appendTextSegment(target, text.slice(cursor));
-}
-
-function appendTextSegment(target, text) {
-  const lines = text.split("\n");
-  lines.forEach((line, index) => {
-    if (index > 0) {
-      target.appendChild(document.createElement("br"));
-    }
-    if (line) {
-      target.appendChild(document.createTextNode(line));
-    }
   });
 }
 
@@ -3027,7 +3115,11 @@ function showSelectionPreview(selection, options = {}) {
   for (const rect of selectionPreviewRects(selection, page)) {
     const [x0, y0, x1, y1] = rect;
     const node = document.createElement("div");
-    node.className = options.flash ? "selection-preview-rect summary-flash-rect" : "selection-preview-rect";
+    node.className = [
+      "selection-preview-rect",
+      options.flash ? "summary-flash-rect" : "",
+      options.className || "",
+    ].filter(Boolean).join(" ");
     node.style.left = `${x0}px`;
     node.style.top = `${y0}px`;
     node.style.width = `${Math.max(4, x1 - x0)}px`;
