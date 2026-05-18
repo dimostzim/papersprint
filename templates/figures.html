@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Figures - PaperSprint</title>
-    <link rel="stylesheet" href="/static/styles.css?v=48" />
+    <link rel="stylesheet" href="/static/styles.css?v=53" />
   </head>
   <body class="figures-body" data-paper-id="{{ paper_id }}">
     <header class="topbar">
@@ -31,10 +31,17 @@
           placeholder="OpenAI API key"
           aria-label="OpenAI API key"
         />
-        <input id="text-model-input" class="model-input" type="text" aria-label="Text model" spellcheck="false" />
-        <select id="text-effort-select" class="effort-select" aria-label="Text reasoning effort"></select>
-        <input id="vision-model-input" class="model-input" type="text" aria-label="Vision model" spellcheck="false" />
-        <select id="vision-effort-select" class="effort-select" aria-label="Vision reasoning effort"></select>
+        <label class="model-group">
+          <span>Text</span>
+          <input id="text-model-input" class="model-input" type="text" list="model-options" aria-label="Text model" spellcheck="false" />
+          <select id="text-effort-select" class="effort-select" aria-label="Text reasoning effort"></select>
+        </label>
+        <label class="model-group">
+          <span>Vision</span>
+          <input id="vision-model-input" class="model-input" type="text" list="model-options" aria-label="Vision model" spellcheck="false" />
+          <select id="vision-effort-select" class="effort-select" aria-label="Vision reasoning effort"></select>
+        </label>
+        <datalist id="model-options"></datalist>
         <a class="button-link" href="/">Reader</a>
         <button id="reanalyze-figures-button" class="loading-button" type="button" disabled>
           <span class="button-spinner" aria-hidden="true"></span>
@@ -77,6 +84,6 @@
 
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/figures.js?v=18"></script>
+    <script type="module" src="/static/figures.js?v=19"></script>
   </body>
 </html>

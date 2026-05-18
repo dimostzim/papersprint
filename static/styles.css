@@ -229,6 +229,7 @@ button:disabled {
 
 .upload-form select,
 .upload-form input,
+.model-group,
 .figure-page-actions select,
 .figure-page-actions input,
 .upload-form button,
@@ -237,6 +238,25 @@ button:disabled {
 .file-picker span {
   height: 38px;
   border-radius: 8px;
+}
+
+.model-group {
+  width: 248px;
+  height: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 3px 6px;
+  align-items: end;
+}
+
+.model-group > span {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .upload-form select,
@@ -250,13 +270,13 @@ button:disabled {
 }
 
 .model-input {
-  width: 122px;
-  min-width: 118px;
+  width: 100%;
+  min-width: 0;
   font-size: 13px;
 }
 
 .effort-select {
-  min-width: 112px;
+  min-width: 0;
 }
 
 .api-key-input {

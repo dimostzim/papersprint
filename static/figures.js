@@ -23,6 +23,7 @@ const els = {
   textEffortSelect: document.getElementById("text-effort-select"),
   visionModelInput: document.getElementById("vision-model-input"),
   visionEffortSelect: document.getElementById("vision-effort-select"),
+  modelOptions: document.getElementById("model-options"),
   warnings: document.getElementById("figure-warnings"),
   list: document.getElementById("figures-list"),
   reanalyzeButton: document.getElementById("reanalyze-figures-button"),
@@ -158,6 +159,25 @@ function populateEffortSelect(select, efforts, selected, prefix) {
   );
 }
 
+function populateModelOptions(settings) {
+  if (!els.modelOptions) {
+    return;
+  }
+
+  const models = [
+    settings.default_text_model,
+    settings.default_vision_model,
+    ...(settings.model_options || []),
+  ]
+    .map((model) => String(model || "").trim())
+    .filter(Boolean);
+  const uniqueModels = Array.from(new Set(models));
+  setHtml(
+    els.modelOptions,
+    uniqueModels.map((model) => `<option value="${escapeHtml(model)}"></option>`).join(""),
+  );
+}
+
 async function loadSettings() {
   const settings = await requestJson("/api/settings");
   if (settings.default_provider && els.providerSelect) {
@@ -180,6 +200,7 @@ async function loadSettings() {
     els.visionModelInput.placeholder = "Vision model";
     els.visionModelInput.title = "Vision model";
   }
+  populateModelOptions(settings);
   populateEffortSelect(els.textEffortSelect, efforts, textEffort, "Text");
   populateEffortSelect(els.visionEffortSelect, efforts, visionEffort, "Vision");
 }

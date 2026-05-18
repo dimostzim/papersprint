@@ -22,6 +22,7 @@ ANALYSIS_VERSION = 11
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
 REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
+MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"]
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
@@ -65,6 +66,7 @@ def provider_status() -> dict[str, Any]:
             "CODEX_REASONING_EFFORT",
         ),
         "reasoning_efforts": sorted(REASONING_EFFORTS, key=["none", "low", "medium", "high", "xhigh"].index),
+        "model_options": MODEL_OPTIONS,
         "openai_available": has_openai_key,
         "codex_available": has_codex,
         "providers": [
