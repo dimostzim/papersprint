@@ -104,6 +104,8 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "goal|novelty|method|result|limitation" in prompt
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
+    assert "Key takeaways should be understandable to a researcher outside this exact subfield" in prompt
+    assert "[plain-language meaning]" in prompt
     assert "do not optimize for the absolute minimum" in prompt
     assert "Use the novelty label for contribution claims" in prompt
     assert "Use the limitation label only for limitations of this paper's own data" in prompt

@@ -18,7 +18,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 9
+ANALYSIS_VERSION = 10
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
@@ -95,7 +95,7 @@ Return JSON with exactly this shape:
   "title": "paper title",
   "overview": "3-5 sentence plain summary",
   "background_notes": ["3-5 short beginner-friendly notes explaining early terms, acronyms, datasets, or concepts needed to read this paper"],
-  "key_takeaways": ["4-7 concrete takeaways"],
+  "key_takeaways": ["4-7 concrete takeaways with bracketed plain-language clarification when a technical term needs it"],
   "read_this_first": ["3-5 specific paper areas or excerpts to inspect first"],
   "glossary": [{{"term": "term or acronym", "definition": "short paper-specific definition"}}],
   "highlights": [
@@ -111,6 +111,7 @@ Return JSON with exactly this shape:
 
 Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
+- Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
 - Add a highlight only if it changes the reader's understanding of the task, novelty, method, evidence, or claim limitation.
 - Abstract highlights are allowed when they provide useful orientation, especially for goal, novelty, and main result.
