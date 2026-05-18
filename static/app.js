@@ -54,10 +54,13 @@ const state = {
   activeCitation: null,
   activeHighlightIndex: null,
   pendingCitationContext: null,
+  activeFigure: null,
   activeHighlightFacet: "all",
   pdfZoom: 1,
   leftPanelCollapsed: false,
   rightPanelCollapsed: false,
+  figureAnalysisRunning: false,
+  selectedFigures: [],
 };
 
 const els = {
@@ -102,6 +105,7 @@ const els = {
   codeList: document.getElementById("code-list"),
   reviewerSection: document.getElementById("reviewer-section"),
   reviewerQuestions: document.getElementById("reviewer-questions"),
+  chatFigureFocus: document.getElementById("chat-figure-focus"),
   chatMessages: document.getElementById("chat-messages"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
@@ -115,6 +119,7 @@ const els = {
   highlightCategoryInput: document.getElementById("highlight-category-input"),
   highlightColorInput: document.getElementById("highlight-color-input"),
   highlightPopover: document.getElementById("highlight-popover"),
+  figurePopover: document.getElementById("figure-popover"),
   citationPopover: document.getElementById("citation-popover"),
   toast: document.getElementById("toast"),
 };
@@ -714,6 +719,8 @@ function setSelectedPaper(paper) {
   state.selectedPaper = paper;
   state.chatMessages = [];
   state.pendingCitationContext = null;
+  state.selectedFigures = [];
+  state.activeFigure = null;
   state.activeHighlightIndex = null;
   state.activeHighlightFacet = "all";
   upsertPaperSummary(paper);
@@ -721,6 +728,7 @@ function setSelectedPaper(paper) {
   renderPaperList();
   renderPaperDetails(paper);
   renderChat();
+  renderChatFigureFocus();
 }
 
 function clearSelectedPaper() {
@@ -730,9 +738,12 @@ function clearSelectedPaper() {
   state.pageWords = new Map();
   state.textSelectionDrag = null;
   state.pendingCitationContext = null;
+  state.selectedFigures = [];
+  state.activeFigure = null;
   state.activeHighlightFacet = "all";
   hideSelectionPopover();
   hideCitationPopover();
+  hideFigurePopover();
   hideHighlightPopover();
   if (state.analysisPoll) {
     window.clearTimeout(state.analysisPoll);
@@ -763,17 +774,19 @@ function clearSelectedPaper() {
   renderHighlightFilters([]);
   renderListPanel(els.takeawaysTab, []);
   renderChat();
+  renderChatFigureFocus();
 }
 
 function syncPaperActions() {
   const isAnalyzing = state.selectedPaper?.analysis_status === "analyzing";
   syncPdfZoomControls();
   setLoadingButton(els.analyzeButton, Boolean(isAnalyzing), isAnalyzing ? "Analyzing" : "Analyze");
+  setLoadingButton(els.figuresButton, state.figureAnalysisRunning, state.figureAnalysisRunning ? "Analyzing" : "Figures");
   if (els.analyzeButton) {
     els.analyzeButton.disabled = Boolean(isAnalyzing);
   }
   if (els.figuresButton) {
-    els.figuresButton.disabled = !state.selectedPaper;
+    els.figuresButton.disabled = !state.selectedPaper || state.figureAnalysisRunning;
   }
 }
 
@@ -1103,6 +1116,71 @@ function addCitationToChat(citation) {
   showToast("Citation added to chat");
 }
 
+function isFigureSelected(figureId) {
+  return state.selectedFigures.some((figure) => figure.id === figureId);
+}
+
+function syncSelectedFigures() {
+  const figures = state.selectedPaper?.figures || [];
+  state.selectedFigures = state.selectedFigures
+    .map((figure) => figures.find((item) => item.id === figure.id))
+    .filter(Boolean);
+}
+
+function selectedFigureContext() {
+  return state.selectedFigures.map((figure) => ({
+    id: figure.id,
+    page_number: figure.page_number,
+    type: figure.type,
+    label: figure.label,
+    title: figure.title,
+    caption: figure.caption,
+    explanation: figure.explanation,
+    why_it_matters: figure.why_it_matters,
+    uncertainty: figure.uncertainty,
+  }));
+}
+
+function renderChatFigureFocus() {
+  if (!els.chatFigureFocus) {
+    return;
+  }
+  if (!state.selectedFigures.length) {
+    els.chatFigureFocus.classList.add("hidden");
+    setHtml(els.chatFigureFocus, "");
+    return;
+  }
+
+  els.chatFigureFocus.classList.remove("hidden");
+  setHtml(
+    els.chatFigureFocus,
+    state.selectedFigures
+      .map((figure) => `
+        <span class="figure-focus-chip">
+          <span>${escapeHtml(figureTitle(figure))}</span>
+          <button data-remove-chat-figure="${escapeHtml(figure.id)}" type="button" aria-label="Remove figure">×</button>
+        </span>
+      `)
+      .join(""),
+  );
+  els.chatFigureFocus.querySelectorAll("[data-remove-chat-figure]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedFigures = state.selectedFigures.filter((figure) => figure.id !== button.dataset.removeChatFigure);
+      renderChatFigureFocus();
+    });
+  });
+}
+
+function addFigureToChat(figure) {
+  if (!figure?.id || isFigureSelected(figure.id)) {
+    return;
+  }
+  state.selectedFigures.push(figure);
+  renderChatFigureFocus();
+  els.chatInput?.focus();
+  showToast("Figure added to chat");
+}
+
 function citationsByPage(citations) {
   const map = new Map();
   for (const [citationIndex, citation] of (citations || []).entries()) {
@@ -1279,6 +1357,19 @@ function highlightsByPage(highlights) {
   return map;
 }
 
+function figuresByPage(figures) {
+  const map = new Map();
+  for (const figure of figures || []) {
+    if (!figure?.page_number || !Array.isArray(figure.bbox_pct)) {
+      continue;
+    }
+    const pageFigures = map.get(figure.page_number) || [];
+    pageFigures.push(figure);
+    map.set(figure.page_number, pageFigures);
+  }
+  return map;
+}
+
 async function renderPdf(paper) {
   const token = ++state.renderToken;
   state.pageTexts = new Map();
@@ -1286,6 +1377,7 @@ async function renderPdf(paper) {
   state.textSelectionDrag = null;
   hideSelectionPopover();
   hideCitationPopover();
+  hideFigurePopover();
   hideHighlightPopover();
   els.readerEmpty?.classList.add("hidden");
   els.pdfViewer?.classList.remove("hidden");
@@ -1294,6 +1386,7 @@ async function renderPdf(paper) {
   const pdfDoc = await pdfjsLib.getDocument(`/api/papers/${paper.id}/file`).promise;
   const pageHighlights = highlightsByPage(filteredHighlights(paper.highlights || []));
   const pageCitations = citationsByPage(paper.citations);
+  const pageFigures = figuresByPage(paper.figures || []);
   const pageSizes = new Map((paper.page_sizes || []).map((page) => [page.page_number, page]));
 
   const pages = [];
@@ -1358,6 +1451,7 @@ async function renderPdf(paper) {
       return;
     }
 
+    renderPageFigures(overlay, pageFigures.get(pageNumber) || [], viewport);
     renderPageHighlights(overlay, pageHighlights.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
     renderPageCitations(overlay, pageCitations.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
   }
@@ -1416,6 +1510,53 @@ function renderPageHighlights(overlay, highlights, pageSize, viewport) {
       });
       overlay.appendChild(node);
     }
+  }
+}
+
+function validFigureBox(figure) {
+  const values = (figure?.bbox_pct || []).map(Number);
+  if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+
+  const [left, top, right, bottom] = values.map((value) => clamp(value, 0, 100));
+  if (right <= left || bottom <= top) {
+    return null;
+  }
+  return [left, top, right, bottom];
+}
+
+function figureTitle(figure) {
+  return String(figure?.label || figure?.title || "Visual").replace(/\s+/g, " ").trim();
+}
+
+function renderPageFigures(overlay, figures, viewport) {
+  for (const figure of figures) {
+    const box = validFigureBox(figure);
+    if (!box) {
+      continue;
+    }
+
+    const [left, top, right, bottom] = box;
+    const node = document.createElement("button");
+    const isActive = state.activeFigure?.id && state.activeFigure.id === figure.id;
+    node.className = `figure-rect ${isActive ? "active" : ""}`;
+    node.type = "button";
+    node.dataset.figureId = figure.id || "";
+    node.title = `${figureTitle(figure)}: ${figure.why_it_matters || figure.explanation || figure.caption || ""}`;
+    node.style.left = `${(left / 100) * viewport.width}px`;
+    node.style.top = `${(top / 100) * viewport.height}px`;
+    node.style.width = `${Math.max(14, ((right - left) / 100) * viewport.width)}px`;
+    node.style.height = `${Math.max(14, ((bottom - top) / 100) * viewport.height)}px`;
+
+    const label = document.createElement("span");
+    label.textContent = figure.type || "visual";
+    node.appendChild(label);
+    node.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showFigurePopover(figure, node.getBoundingClientRect());
+    });
+    overlay.appendChild(node);
   }
 }
 
@@ -2115,6 +2256,67 @@ function hideHighlightPopover() {
   els.highlightPopover?.classList.add("hidden");
 }
 
+function figureTextBlock(label, text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  return value ? `<p><b>${escapeHtml(label)}:</b> ${escapeHtml(value)}</p>` : "";
+}
+
+function renderFigurePopover(figure) {
+  setHtml(
+    els.figurePopover,
+    `
+      <div class="figure-popover-copy">
+        <div class="figure-popover-heading">
+          <span class="label label-important">${escapeHtml(figure?.type || "visual")}</span>
+          <span>p. ${Number(figure?.page_number) || "?"}</span>
+        </div>
+        <strong>${escapeHtml(figureTitle(figure))}</strong>
+        ${figureTextBlock("Big picture", figure?.why_it_matters)}
+        ${figureTextBlock("What it shows", figure?.explanation)}
+        ${figureTextBlock("Caption", figure?.caption)}
+        ${figureTextBlock("Uncertainty", figure?.uncertainty)}
+      </div>
+      <button data-add-active-figure type="button">Add to chat</button>
+    `,
+  );
+}
+
+function selectFigure(figureId) {
+  els.pdfViewer?.querySelectorAll(".figure-rect").forEach((node) => {
+    node.classList.toggle("active", node.dataset.figureId === figureId);
+  });
+}
+
+function showFigurePopover(figure, rect) {
+  if (!figure || !els.figurePopover) {
+    hideFigurePopover();
+    return;
+  }
+
+  hideSelectionPopover();
+  hideCitationPopover();
+  hideHighlightPopover();
+  state.activeFigure = figure;
+  selectFigure(figure.id || "");
+  renderFigurePopover(figure);
+
+  const popover = els.figurePopover;
+  popover.classList.remove("hidden");
+  const top = Math.max(8, rect.top - popover.offsetHeight - 8);
+  const left = Math.min(
+    window.innerWidth - popover.offsetWidth - 8,
+    Math.max(8, rect.left + rect.width / 2 - popover.offsetWidth / 2),
+  );
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
+}
+
+function hideFigurePopover() {
+  state.activeFigure = null;
+  els.figurePopover?.classList.add("hidden");
+  els.pdfViewer?.querySelectorAll(".figure-rect.active").forEach((node) => node.classList.remove("active"));
+}
+
 function renderCitationPopover(citation) {
   const choices = citation.grouped_citations?.length ? citation.grouped_citations : [citation];
 
@@ -2356,6 +2558,7 @@ async function sendChatMessage(content, forceWeb = false, citationContext = null
       provider: selectedProvider(),
       api_key: requestApiKey() || null,
       citation_context: citationContext,
+      figure_context: selectedFigureContext(),
       ...textModelRequestOptions(),
     }),
   });
@@ -2370,13 +2573,58 @@ async function sendChatMessage(content, forceWeb = false, citationContext = null
   renderChat();
 }
 
-function openFiguresPage() {
+async function analyzeFiguresInReader(force = false) {
   if (!state.selectedPaper) {
     showToast("Select a paper first");
     return;
   }
+  if (!requireOpenAiKey()) {
+    return;
+  }
 
-  window.open(`/figures/${state.selectedPaper.id}`, "_blank", "noopener,noreferrer");
+  const paperId = state.selectedPaper.id;
+  state.figureAnalysisRunning = true;
+  syncPaperActions();
+  showToast("Analyzing figures and tables", true);
+
+  try {
+    const payload = await requestJson(`/api/papers/${paperId}/figures/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: selectedProvider(),
+        api_key: requestApiKey() || null,
+        force,
+        ...visionModelRequestOptions(),
+      }),
+    });
+    if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
+      hideToast();
+      return;
+    }
+
+    const figures = payload.figures || [];
+    const paper = {
+      ...state.selectedPaper,
+      figures,
+      figure_warnings: payload.warnings || [],
+      figure_provider_used: payload.provider_used || "unknown",
+      figure_count: figures.length,
+    };
+    applySelectedPaperUpdate(paper);
+    syncSelectedFigures();
+    renderChatFigureFocus();
+    await renderPdfPreservingScroll(paper);
+    hideToast();
+    showToast(
+      figures.length
+        ? `${figures.length} figure/table annotation${figures.length === 1 ? "" : "s"} ready`
+        : "No figures or tables found",
+    );
+  } finally {
+    state.figureAnalysisRunning = false;
+    syncPaperActions();
+  }
 }
 
 els.uploadForm?.addEventListener("submit", (event) => {
@@ -2437,6 +2685,9 @@ document.addEventListener("mousedown", (event) => {
   if (!els.citationPopover?.contains(event.target) && !event.target.closest?.(".citation-rect")) {
     hideCitationPopover();
   }
+  if (!els.figurePopover?.contains(event.target) && !event.target.closest?.(".figure-rect")) {
+    hideFigurePopover();
+  }
   if (!els.highlightPopover?.contains(event.target) && !event.target.closest?.(".highlight-rect")) {
     hideHighlightPopover();
   }
@@ -2450,6 +2701,10 @@ els.highlightPopover?.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
+els.figurePopover?.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
 els.highlightPopover?.addEventListener("click", (event) => {
   if (event.target.closest?.("[data-explain-highlight]")) {
     explainActiveHighlight().catch((error) => {
@@ -2459,6 +2714,13 @@ els.highlightPopover?.addEventListener("click", (event) => {
   }
   if (event.target.closest?.("[data-remove-highlight]")) {
     removeActiveHighlight().catch((error) => showToast(error.message || String(error)));
+  }
+});
+
+els.figurePopover?.addEventListener("click", (event) => {
+  if (event.target.closest?.("[data-add-active-figure]")) {
+    addFigureToChat(state.activeFigure);
+    hideFigurePopover();
   }
 });
 
@@ -2481,7 +2743,10 @@ els.refreshButton?.addEventListener("click", () => {
 });
 
 els.figuresButton?.addEventListener("click", () => {
-  openFiguresPage();
+  analyzeFiguresInReader(false).catch((error) => {
+    hideToast();
+    showToast(error.message || String(error));
+  });
 });
 
 els.leftPanelToggle?.addEventListener("click", () => {

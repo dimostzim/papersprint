@@ -848,6 +848,7 @@ h2 {
 
 .highlight-rect {
   position: absolute;
+  z-index: 2;
   border-radius: 3px;
   mix-blend-mode: multiply;
   opacity: 0.3;
@@ -914,8 +915,45 @@ h2 {
   background: #b6bec3;
 }
 
+.figure-rect {
+  position: absolute;
+  z-index: 1;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: rgba(229, 163, 33, 0.08);
+  outline: 2px solid rgba(229, 163, 33, 0.58);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.figure-rect:hover,
+.figure-rect.active {
+  background: rgba(229, 163, 33, 0.14);
+  outline-color: var(--amber);
+}
+
+.figure-rect span {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: var(--strong-surface);
+  color: var(--strong-surface-text);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .citation-rect {
   position: absolute;
+  z-index: 3;
   border: 0;
   border-radius: 3px;
   padding: 0;
@@ -1270,7 +1308,7 @@ h2 {
 
 .chat-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
   min-height: 0;
   overflow: hidden;
@@ -1373,6 +1411,7 @@ h2 {
 
 .selection-popover,
 .citation-popover,
+.figure-popover,
 .highlight-popover {
   position: fixed;
   z-index: 60;
@@ -1386,6 +1425,7 @@ h2 {
 
 .selection-popover button,
 .citation-popover button,
+.figure-popover button,
 .highlight-popover button {
   height: 30px;
   border-radius: 6px;
@@ -1448,6 +1488,47 @@ h2 {
 
 .highlight-popover-label {
   max-width: 260px;
+}
+
+.figure-popover {
+  width: min(360px, calc(100vw - 16px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.figure-popover-copy {
+  display: grid;
+  gap: 7px;
+}
+
+.figure-popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.figure-popover-heading span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.figure-popover strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.figure-popover p {
+  color: var(--body-copy);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.figure-popover b {
+  color: var(--ink);
 }
 
 .citation-choice-list {
