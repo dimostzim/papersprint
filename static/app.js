@@ -2310,6 +2310,12 @@ function selectHighlight(highlightIndex) {
   });
 }
 
+function setHighlightHover(highlightIndex, isHovered) {
+  els.pdfViewer?.querySelectorAll(`[data-highlight-index="${highlightIndex}"]`).forEach((node) => {
+    node.classList.toggle("hover", isHovered);
+  });
+}
+
 function jumpToHighlight(highlightIndex) {
   const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
   if (!highlight) {
@@ -2644,6 +2650,15 @@ function renderPageHighlights(overlay, highlights, pageSize, viewport) {
           return;
         }
         showHighlightPopover(highlight.highlightIndex, node.getBoundingClientRect());
+      });
+      node.addEventListener("mouseenter", () => {
+        setHighlightHover(highlight.highlightIndex, true);
+      });
+      node.addEventListener("mouseleave", (event) => {
+        const relatedHighlightIndex = event.relatedTarget?.closest?.(".highlight-rect")?.dataset.highlightIndex;
+        if (relatedHighlightIndex !== String(highlight.highlightIndex)) {
+          setHighlightHover(highlight.highlightIndex, false);
+        }
       });
       overlay.appendChild(node);
     }

@@ -1102,7 +1102,8 @@ h2 {
   cursor: pointer;
 }
 
-.highlight-rect:hover {
+.highlight-rect:hover,
+.highlight-rect.hover {
   opacity: 0.46;
 }
 
