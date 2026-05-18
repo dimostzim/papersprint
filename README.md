@@ -16,7 +16,7 @@ PaperSprint is a local AI PDF paper reader. It loads papers in the browser, adds
 ## Quick Start
 
 ```bash
-cd /Users/nucleotaid/Projects/papersprint
+cd /Users/nucleotaid/Projects/PaperSprint
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
