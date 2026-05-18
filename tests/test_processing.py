@@ -109,7 +109,7 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "problem|solution|novelty|method|benchmarking|result|ablation|compute|tradeoff|limitation|failure" in prompt
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
-    assert '"evidence_hint": "exact supporting paper sentence or highlight snippet, optional"' in prompt
+    assert '"evidence_hint": "exact supporting paper sentence, figure/table label, or visual reference, optional"' in prompt
     assert "Key takeaways should be understandable to a researcher outside this exact subfield" in prompt
     assert "For each key takeaway, include an evidence_hint" in prompt
     assert '"not_shown": ["1-3 important things' in prompt

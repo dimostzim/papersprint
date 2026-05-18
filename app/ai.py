@@ -141,7 +141,7 @@ Return JSON with exactly this shape:
   "key_takeaways": [
     {{
       "text": "concrete takeaway with bracketed plain-language clarification when a technical term needs it",
-      "evidence_hint": "exact supporting paper sentence or highlight snippet, optional"
+      "evidence_hint": "exact supporting paper sentence, figure/table label, or visual reference, optional"
     }}
   ],
   "not_shown": ["1-3 important things the paper does not show or should not be over-interpreted as showing"],
@@ -163,8 +163,8 @@ Return JSON with exactly this shape:
 Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
-- For each key takeaway, include an evidence_hint when there is a concise supporting sentence in the paper. Prefer a sentence that is also returned as a highlight so the UI can jump to the proof. Leave evidence_hint empty only when no single sentence supports the takeaway.
-- When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
+- For each key takeaway, include an evidence_hint when there is a concise supporting sentence, figure/table label, or visual reference in the paper. Do not force it to be one of the returned highlights; the UI can jump to ordinary paper text or figure/table annotations after analysis. Leave evidence_hint empty only when no local evidence target supports the takeaway.
+- When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway and/or evidence_hint, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
 - Not-shown items should prevent common over-reading: state what the paper did not demonstrate, did not compare, did not validate, or did not make usable.
 - Code availability should use only paper text. Say when release or usability is unclear.
 - Reviewer questions should be specific requests a reviewer would ask the authors to clarify, test, release, or bound.
@@ -548,7 +548,7 @@ Return JSON with exactly this shape:
       "title": "short descriptive title",
       "bbox_pct": [x0, y0, x1, y1],
       "caption": "visible caption or nearby caption text",
-      "explanation": "plain explanation of the main scientific point, not a full inventory of visible details",
+      "explanation": "plain explanation of the main scientific point: what the visual shows, including results, comparisons, variables, or evidence when visible; not a full inventory of visible details",
       "why_it_matters": "how this visual supports, limits, or clarifies the paper's argument or evidence",
       "uncertainty": "what may be ambiguous or hard to read"
     }}

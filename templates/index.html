@@ -10,18 +10,18 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=53" />
+    <link rel="stylesheet" href="/static/styles.css?v=54" />
   </head>
   <body class="reader-body">
     <header class="topbar">
-      <div class="brand">
-        <div>
-          <strong>PaperSprint</strong>
-          <span id="provider-status">Loading</span>
+      <div class="topbar-left">
+        <div class="brand">
+          <div>
+            <strong>PaperSprint</strong>
+            <span id="provider-status">Loading</span>
+          </div>
         </div>
-      </div>
 
-      <form id="upload-form" class="upload-form">
         <div id="pdf-zoom-controls" class="pdf-controls hidden" role="toolbar" aria-label="PDF zoom">
           <button id="pdf-zoom-out-button" class="icon-button" title="Zoom out" type="button" aria-label="Zoom out">-</button>
           <span id="pdf-zoom-label" class="pdf-zoom-label">100%</span>
@@ -32,6 +32,18 @@
           <option value="codex">Codex subscription</option>
           <option value="openai">OpenAI API key</option>
         </select>
+        <input
+          id="api-key-input"
+          class="api-key-input hidden"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="OpenAI API key"
+          aria-label="OpenAI API key"
+        />
+      </div>
+
+      <form id="upload-form" class="upload-form">
         <label class="model-group">
           <span>Text</span>
           <input id="text-model-input" class="model-input" type="text" list="model-options" aria-label="Text model" spellcheck="false" />
@@ -43,15 +55,6 @@
           <select id="vision-effort-select" class="effort-select" aria-label="Vision reasoning effort"></select>
         </label>
         <datalist id="model-options"></datalist>
-        <input
-          id="api-key-input"
-          class="api-key-input hidden"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="OpenAI API key"
-          aria-label="OpenAI API key"
-        />
         <label class="file-picker">
           <input id="pdf-input" type="file" accept="application/pdf,.pdf" multiple />
           <span>Choose PDFs</span>
@@ -59,10 +62,6 @@
         <button id="analyze-button" class="loading-button" type="submit">
           <span class="button-spinner" aria-hidden="true"></span>
           <span class="button-label">Analyze</span>
-        </button>
-        <button id="figures-button" class="loading-button" type="button" disabled>
-          <span class="button-spinner" aria-hidden="true"></span>
-          <span class="button-label">Figures</span>
         </button>
         <button id="theme-toggle" class="icon-button" title="Toggle dark mode" type="button" aria-label="Toggle dark mode">
           ☾
@@ -127,17 +126,20 @@
             <h2 class="summary-section-title">Background</h2>
             <div id="background-notes" class="tab-panel"></div>
           </div>
+        </section>
 
+        <div
+          id="summary-resize-handle"
+          class="panel-resize-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize summary"
+          tabindex="0"
+        ></div>
+
+        <section class="takeaways-section">
           <h2 class="summary-section-title">Takeaways</h2>
           <div id="takeaways-tab" class="tab-panel takeaways-panel"></div>
-          <div
-            id="takeaways-resize-handle"
-            class="takeaways-resize-handle"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize takeaways"
-            tabindex="0"
-          ></div>
 
           <div id="not-shown-section" class="summary-subsection hidden">
             <h2 class="summary-section-title">Not Shown</h2>
@@ -218,6 +220,6 @@
     <div id="citation-popover" class="citation-popover hidden"></div>
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/app.js?v=48"></script>
+    <script type="module" src="/static/app.js?v=49"></script>
   </body>
 </html>

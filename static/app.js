@@ -60,7 +60,9 @@ const state = {
   leftPanelCollapsed: false,
   rightPanelCollapsed: false,
   figureAnalysisRunning: false,
+  figurePopoverDrag: null,
   selectedFigures: [],
+  summaryEvidenceTargets: [],
 };
 
 const els = {
@@ -75,13 +77,15 @@ const els = {
   modelOptions: document.getElementById("model-options"),
   apiKeyInput: document.getElementById("api-key-input"),
   analyzeButton: document.getElementById("analyze-button"),
-  figuresButton: document.getElementById("figures-button"),
   providerStatus: document.getElementById("provider-status"),
   refreshButton: document.getElementById("refresh-button"),
   paperList: document.getElementById("paper-list"),
   assistantPanel: document.querySelector(".assistant-panel"),
   leftPanelToggle: document.getElementById("left-panel-toggle"),
   rightPanelToggle: document.getElementById("right-panel-toggle"),
+  summaryPanel: document.querySelector(".summary-panel"),
+  summaryResizeHandle: document.getElementById("summary-resize-handle"),
+  takeawaysSection: document.querySelector(".takeaways-section"),
   chatResizeHandle: document.getElementById("chat-resize-handle"),
   readerPanel: document.querySelector(".reader-panel"),
   readerEmpty: document.getElementById("reader-empty"),
@@ -99,7 +103,6 @@ const els = {
   backgroundSection: document.getElementById("background-section"),
   backgroundNotes: document.getElementById("background-notes"),
   takeawaysTab: document.getElementById("takeaways-tab"),
-  takeawaysResizeHandle: document.getElementById("takeaways-resize-handle"),
   notShownSection: document.getElementById("not-shown-section"),
   notShownList: document.getElementById("not-shown-list"),
   codeSection: document.getElementById("code-section"),
@@ -241,16 +244,20 @@ function submitChatOnEnter(event) {
   els.chatForm?.requestSubmit();
 }
 
-function setChatPanelSplit(clientY) {
-  if (!els.assistantPanel || !els.chatResizeHandle) {
+function setSummaryPanelSplit(clientY) {
+  if (!els.assistantPanel || !els.summaryResizeHandle) {
     return;
   }
 
   const panelRect = els.assistantPanel.getBoundingClientRect();
-  const handleHeight = els.chatResizeHandle.getBoundingClientRect().height || 8;
-  const minSummaryHeight = 130;
+  const handleHeight = els.summaryResizeHandle.getBoundingClientRect().height || 8;
+  const minSummaryHeight = 72;
+  const minTakeawaysHeight = 90;
   const minChatHeight = 180;
-  const maxSummaryHeight = Math.max(minSummaryHeight, panelRect.height - handleHeight - minChatHeight);
+  const maxSummaryHeight = Math.max(
+    minSummaryHeight,
+    panelRect.height - handleHeight * 2 - minTakeawaysHeight - minChatHeight,
+  );
   const nextSummaryHeight = Math.min(
     maxSummaryHeight,
     Math.max(minSummaryHeight, clientY - panelRect.top),
@@ -259,27 +266,26 @@ function setChatPanelSplit(clientY) {
 }
 
 function currentSummaryPanelHeight() {
-  const summaryPanel = els.assistantPanel?.querySelector(".summary-panel");
-  return summaryPanel?.getBoundingClientRect().height || 0;
+  return els.summaryPanel?.getBoundingClientRect().height || 0;
 }
 
-function startChatPanelResize(event) {
+function startSummaryPanelResize(event) {
   if (!els.assistantPanel) {
     return;
   }
 
   event.preventDefault();
-  els.assistantPanel.classList.add("is-resizing");
+  els.assistantPanel.classList.add("is-resizing-summary");
   const pointerId = event.pointerId;
-  els.chatResizeHandle?.setPointerCapture?.(pointerId);
-  setChatPanelSplit(event.clientY);
+  els.summaryResizeHandle?.setPointerCapture?.(pointerId);
+  setSummaryPanelSplit(event.clientY);
 
   const onPointerMove = (moveEvent) => {
-    setChatPanelSplit(moveEvent.clientY);
+    setSummaryPanelSplit(moveEvent.clientY);
   };
   const onPointerUp = () => {
-    els.assistantPanel?.classList.remove("is-resizing");
-    els.chatResizeHandle?.releasePointerCapture?.(pointerId);
+    els.assistantPanel?.classList.remove("is-resizing-summary");
+    els.summaryResizeHandle?.releasePointerCapture?.(pointerId);
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
   };
@@ -288,37 +294,45 @@ function startChatPanelResize(event) {
   window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
-function setTakeawaysHeight(clientY) {
-  if (!els.takeawaysTab) {
+function setTakeawaysPanelSplit(clientY) {
+  if (!els.assistantPanel || !els.takeawaysSection || !els.chatResizeHandle) {
     return;
   }
 
-  const panelRect = els.takeawaysTab.getBoundingClientRect();
-  const nextHeight = clamp(clientY - panelRect.top, 90, 520);
-  els.takeawaysTab.style.setProperty("--takeaways-panel-height", `${Math.round(nextHeight)}px`);
+  const panelRect = els.assistantPanel.getBoundingClientRect();
+  const takeawaysRect = els.takeawaysSection.getBoundingClientRect();
+  const handleHeight = els.chatResizeHandle.getBoundingClientRect().height || 8;
+  const minTakeawaysHeight = 90;
+  const minChatHeight = 180;
+  const maxTakeawaysHeight = Math.max(
+    minTakeawaysHeight,
+    panelRect.bottom - takeawaysRect.top - handleHeight - minChatHeight,
+  );
+  const nextHeight = clamp(clientY - takeawaysRect.top, minTakeawaysHeight, maxTakeawaysHeight);
+  els.assistantPanel.style.setProperty("--takeaways-panel-height", `${Math.round(nextHeight)}px`);
 }
 
 function currentTakeawaysHeight() {
-  return els.takeawaysTab?.getBoundingClientRect().height || 230;
+  return els.takeawaysSection?.getBoundingClientRect().height || 0;
 }
 
-function startTakeawaysResize(event) {
-  if (!els.takeawaysTab) {
+function startTakeawaysPanelResize(event) {
+  if (!els.assistantPanel || !els.takeawaysSection) {
     return;
   }
 
   event.preventDefault();
-  els.takeawaysTab.classList.add("is-resizing");
+  els.assistantPanel.classList.add("is-resizing-takeaways");
   const pointerId = event.pointerId;
-  els.takeawaysResizeHandle?.setPointerCapture?.(pointerId);
-  setTakeawaysHeight(event.clientY);
+  els.chatResizeHandle?.setPointerCapture?.(pointerId);
+  setTakeawaysPanelSplit(event.clientY);
 
   const onPointerMove = (moveEvent) => {
-    setTakeawaysHeight(moveEvent.clientY);
+    setTakeawaysPanelSplit(moveEvent.clientY);
   };
   const onPointerUp = () => {
-    els.takeawaysTab?.classList.remove("is-resizing");
-    els.takeawaysResizeHandle?.releasePointerCapture?.(pointerId);
+    els.assistantPanel?.classList.remove("is-resizing-takeaways");
+    els.chatResizeHandle?.releasePointerCapture?.(pointerId);
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
   };
@@ -800,14 +814,11 @@ function clearSelectedPaper() {
 
 function syncPaperActions() {
   const isAnalyzing = state.selectedPaper?.analysis_status === "analyzing";
+  const isBusy = isAnalyzing || state.figureAnalysisRunning;
   syncPdfZoomControls();
-  setLoadingButton(els.analyzeButton, Boolean(isAnalyzing), isAnalyzing ? "Analyzing" : "Analyze");
-  setLoadingButton(els.figuresButton, state.figureAnalysisRunning, state.figureAnalysisRunning ? "Analyzing" : "Figures");
+  setLoadingButton(els.analyzeButton, Boolean(isBusy), isBusy ? "Analyzing" : "Analyze");
   if (els.analyzeButton) {
-    els.analyzeButton.disabled = Boolean(isAnalyzing);
-  }
-  if (els.figuresButton) {
-    els.figuresButton.disabled = !state.selectedPaper || state.figureAnalysisRunning;
+    els.analyzeButton.disabled = Boolean(isBusy);
   }
 }
 
@@ -818,6 +829,7 @@ function showReaderLoading() {
 }
 
 function renderPaperDetails(paper) {
+  state.summaryEvidenceTargets = [];
   if (els.paperProvider) {
     els.paperProvider.textContent = paper.provider_used || "unknown";
   }
@@ -847,7 +859,7 @@ function renderPaperDetails(paper) {
   if (paper.analysis_status === "analyzing") {
     renderListPanel(els.takeawaysTab, ["Analysis is running. The PDF is ready to read now."]);
   } else if (paper.analysis_status === "ready") {
-    renderListPanel(els.takeawaysTab, ["PDF loaded. Click Analyze when you want AI takeaways and highlights."]);
+    renderListPanel(els.takeawaysTab, ["PDF loaded. Click Analyze when you want AI takeaways, highlights, and figure/table annotations."]);
   } else if (paper.analysis_status === "error") {
     renderListPanel(els.takeawaysTab, [paper.analysis_error || "Analysis failed."]);
   } else {
@@ -942,6 +954,20 @@ function summaryItemEvidenceHint(item) {
   return String(item.evidence_hint || item.evidence || item.evidence_snippet || "").trim();
 }
 
+function normalizedEvidenceValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/fig(?:ure)?\.?/g, "figure")
+    .replace(/tables?/g, "table")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function evidenceTokens(value, limit = 28) {
+  return normalizedEvidenceValue(value).split(" ").filter(Boolean).slice(0, limit);
+}
+
 const SUMMARY_STOP_WORDS = new Set([
   "about",
   "after",
@@ -969,9 +995,8 @@ const SUMMARY_STOP_WORDS = new Set([
 
 function summaryTokens(value) {
   return new Set(
-    String(value || "")
-      .toLowerCase()
-      .match(/[a-z][a-z0-9-]{2,}/g)
+    normalizedEvidenceValue(value)
+      .match(/[a-z][a-z0-9]{2,}/g)
       ?.filter((token) => !SUMMARY_STOP_WORDS.has(token)) || [],
   );
 }
@@ -1016,23 +1041,119 @@ function evidenceHighlightIndexForItem(item) {
   return bestScore >= 0.18 ? bestIndex : null;
 }
 
+function figureReferenceKeys(value) {
+  const references = [];
+  const pattern = /\b(?:fig(?:ure)?\.?|table)\s*([0-9]+[a-z]?)\b/gi;
+  for (const match of String(value || "").matchAll(pattern)) {
+    const prefix = match[0].toLowerCase().startsWith("t") ? "table" : "figure";
+    references.push(`${prefix}${match[1].toLowerCase()}`);
+  }
+  return references;
+}
+
+function figureKey(figure) {
+  return normalizedEvidenceValue([figure?.label, figure?.title].filter(Boolean).join(" ")).replace(/\s+/g, "");
+}
+
+function figureEvidenceTargetForItem(item) {
+  const references = figureReferenceKeys([summaryItemText(item), summaryItemEvidenceHint(item)].join(" "));
+  if (!references.length) {
+    return null;
+  }
+
+  const figure = (state.selectedPaper?.figures || []).find((candidate) => {
+    const key = figureKey(candidate);
+    return references.some((reference) => key.includes(reference));
+  });
+  if (!figure?.id) {
+    return null;
+  }
+
+  const kind = String(figure.type || figure.label || "").toLowerCase().includes("table") ? "Table" : "Figure";
+  return { type: "figure", figureId: figure.id, label: kind };
+}
+
+function textEvidenceTargetForValue(value) {
+  const tokens = evidenceTokens(value);
+  if (tokens.length < 4) {
+    return null;
+  }
+
+  for (const [pageNumber, words] of state.pageWords.entries()) {
+    const normalizedWords = words
+      .map((word) => ({ word, token: normalizedEvidenceValue(word.text) }))
+      .filter((item) => item.token);
+    const wordTokens = normalizedWords.map((item) => item.token);
+    for (let index = 0; index <= wordTokens.length - tokens.length; index += 1) {
+      const matches = tokens.every((token, offset) => wordTokens[index + offset] === token);
+      if (!matches) {
+        continue;
+      }
+      const matchedWords = normalizedWords.slice(index, index + tokens.length).map((item) => item.word);
+      return {
+        type: "text",
+        label: "Text",
+        pageNumber,
+        rects: mergeWordRects(matchedWords, "pdfRect"),
+      };
+    }
+  }
+
+  const query = normalizedEvidenceValue(value).slice(0, 120);
+  if (query.length < 24) {
+    return null;
+  }
+  for (const [pageNumber, pageText] of state.pageTexts.entries()) {
+    if (normalizedEvidenceValue(pageText).includes(query)) {
+      return { type: "page", label: "Text", pageNumber };
+    }
+  }
+  return null;
+}
+
+function textEvidenceTargetForItem(item) {
+  const evidenceHint = summaryItemEvidenceHint(item);
+  return textEvidenceTargetForValue(evidenceHint) || textEvidenceTargetForValue(summaryItemText(item));
+}
+
+function summaryEvidenceTargetForItem(item) {
+  const figureTarget = figureEvidenceTargetForItem(item);
+  if (figureTarget) {
+    return figureTarget;
+  }
+
+  const textTarget = textEvidenceTargetForItem(item);
+  if (textTarget) {
+    return textTarget;
+  }
+
+  const highlightIndex = evidenceHighlightIndexForItem(item);
+  return highlightIndex === null ? null : { type: "highlight", label: "Text", highlightIndex };
+}
+
 function renderListPanel(target, items, options = {}) {
   const values = (items || []).filter((item) => summaryItemText(item));
+  const evidenceTargets = [];
   setHtml(
     target,
-    values.length
+      values.length
       ? `<ul>${values.map((item) => {
         const text = summaryItemText(item);
-        const highlightIndex = options.linkEvidence ? evidenceHighlightIndexForItem(item) : null;
-        const evidenceButton = highlightIndex === null
+        const target = options.linkEvidence ? summaryEvidenceTargetForItem(item) : null;
+        const targetIndex = target ? state.summaryEvidenceTargets.length + evidenceTargets.length : null;
+        if (target) {
+          evidenceTargets.push(target);
+        }
+        const evidenceButton = target === null
           ? ""
-          : `<button class="summary-proof-button" data-summary-highlight-index="${highlightIndex}" type="button">Text</button>`;
+          : `<button class="summary-proof-button" data-summary-evidence-index="${targetIndex}" type="button">${escapeHtml(target.label || "Proof")}</button>`;
         return `<li class="${evidenceButton ? "has-proof" : ""}"><span>${escapeHtml(text)}</span>${evidenceButton}</li>`;
       }).join("")}</ul>`
       : `<div class="muted-box">No items</div>`,
   );
-  target?.querySelectorAll("[data-summary-highlight-index]").forEach((button) => {
-    button.addEventListener("click", () => jumpToHighlight(Number(button.dataset.summaryHighlightIndex)));
+  state.summaryEvidenceTargets.push(...evidenceTargets);
+  target?.querySelectorAll("[data-summary-evidence-index]").forEach((button) => {
+    button.addEventListener("click", () => jumpToSummaryEvidence(Number(button.dataset.summaryEvidenceIndex)));
   });
 }
 
@@ -1355,6 +1476,45 @@ function jumpToHighlight(highlightIndex) {
   }
 }
 
+function jumpToSummaryEvidence(targetIndex) {
+  const target = state.summaryEvidenceTargets[targetIndex];
+  if (!target) {
+    return;
+  }
+
+  if (target.type === "highlight") {
+    jumpToHighlight(target.highlightIndex);
+    return;
+  }
+
+  if (target.type === "figure") {
+    const figure = (state.selectedPaper?.figures || []).find((item) => item.id === target.figureId);
+    const node = Array.from(els.pdfViewer?.querySelectorAll("[data-figure-id]") || [])
+      .find((item) => item.dataset.figureId === target.figureId);
+    if (node && figure) {
+      node.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      showFigurePopover(figure, node.getBoundingClientRect());
+    }
+    return;
+  }
+
+  if (target.type === "text" && target.pageNumber && target.rects?.length) {
+    showSelectionPreview({
+      pageNumber: target.pageNumber,
+      rects: target.rects,
+    });
+    const firstRect = els.pdfViewer?.querySelector(".selection-preview-rect");
+    if (firstRect) {
+      firstRect.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      return;
+    }
+  }
+
+  if (target.pageNumber) {
+    jumpToPage(target.pageNumber);
+  }
+}
+
 function jumpToPage(pageNumber) {
   if (!pageNumber) {
     return;
@@ -1475,6 +1635,10 @@ async function renderPdf(paper) {
     renderPageFigures(overlay, pageFigures.get(pageNumber) || [], viewport);
     renderPageHighlights(overlay, pageHighlights.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
     renderPageCitations(overlay, pageCitations.get(pageNumber) || [], pageSizes.get(pageNumber), viewport);
+  }
+
+  if (state.selectedPaper?.id === paper.id) {
+    renderPaperDetails(state.selectedPaper);
   }
 }
 
@@ -1693,9 +1857,15 @@ async function startSelectedPaperAnalysis(event) {
     }),
   });
   setSelectedPaper(paper);
-  hideToast();
-  showToast("Analysis started. Keep reading while it runs.");
-  pollPaperAnalysis(paper.id);
+  if (paper.analysis_status === "complete") {
+    await renderPdfPreservingScroll(paper);
+    hideToast();
+    await analyzeFiguresInReader(false);
+  } else {
+    hideToast();
+    showToast("Analysis started. Keep reading while it runs.");
+    pollPaperAnalysis(paper.id);
+  }
 }
 
 function pollPaperAnalysis(paperId) {
@@ -1722,8 +1892,9 @@ function pollPaperAnalysis(paperId) {
         pollPaperAnalysis(paperId);
       } else if (paper.analysis_status === "complete") {
         await renderPdfPreservingScroll(paper);
+        renderPaperDetails(paper);
         hideToast();
-        showToast("Analysis ready");
+        await analyzeFiguresInReader(false);
       } else if (paper.analysis_status === "error") {
         hideToast();
         showToast(paper.analysis_error || "Analysis failed");
@@ -2082,7 +2253,7 @@ function customSelectionFromDrag(drag, event) {
 }
 
 function startTextSelection(event) {
-  if (event.button !== 0 || event.target.closest?.(".highlight-rect, .citation-rect")) {
+  if (event.button !== 0 || event.target.closest?.(".highlight-rect, .citation-rect, .figure-rect")) {
     return;
   }
 
@@ -2104,6 +2275,7 @@ function startTextSelection(event) {
   window.getSelection()?.removeAllRanges();
   hideSelectionPopover();
   hideCitationPopover();
+  hideFigurePopover();
   hideHighlightPopover();
   event.preventDefault();
 }
@@ -2197,6 +2369,7 @@ function showSelectionPopoverFor(selection) {
     return;
   }
   hideCitationPopover();
+  hideFigurePopover();
   hideHighlightPopover();
 
   state.activeSelection = {
@@ -2257,6 +2430,7 @@ function showHighlightPopover(highlightIndex, rect) {
   window.getSelection()?.removeAllRanges();
   hideSelectionPopover();
   hideCitationPopover();
+  hideFigurePopover();
   state.activeHighlightIndex = highlightIndex;
   selectHighlight(highlightIndex);
   renderHighlightPopover(highlight);
@@ -2287,15 +2461,14 @@ function renderFigurePopover(figure) {
     els.figurePopover,
     `
       <div class="figure-popover-copy">
-        <div class="figure-popover-heading">
+        <div class="figure-popover-heading figure-popover-drag-handle">
           <span class="label label-important">${escapeHtml(figure?.type || "visual")}</span>
           <span>p. ${Number(figure?.page_number) || "?"}</span>
+          <button class="figure-popover-close" data-close-figure type="button" aria-label="Close">×</button>
         </div>
         <strong>${escapeHtml(figureTitle(figure))}</strong>
         ${figureTextBlock("Big picture", figure?.why_it_matters)}
-        ${figureTextBlock("What it shows", figure?.explanation)}
-        ${figureTextBlock("Caption", figure?.caption)}
-        ${figureTextBlock("Uncertainty", figure?.uncertainty)}
+        ${figureTextBlock("What it shows / results", figure?.explanation)}
       </div>
       <button data-add-active-figure type="button">Add to chat</button>
     `,
@@ -2334,8 +2507,49 @@ function showFigurePopover(figure, rect) {
 
 function hideFigurePopover() {
   state.activeFigure = null;
+  state.figurePopoverDrag = null;
   els.figurePopover?.classList.add("hidden");
   els.pdfViewer?.querySelectorAll(".figure-rect.active").forEach((node) => node.classList.remove("active"));
+}
+
+function startFigurePopoverDrag(event) {
+  const handle = event.target.closest?.(".figure-popover-drag-handle");
+  if (!handle || event.target.closest?.("button") || !els.figurePopover) {
+    return;
+  }
+
+  event.preventDefault();
+  const rect = els.figurePopover.getBoundingClientRect();
+  state.figurePopoverDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    left: rect.left,
+    top: rect.top,
+  };
+  els.figurePopover.setPointerCapture?.(event.pointerId);
+}
+
+function moveFigurePopover(event) {
+  const drag = state.figurePopoverDrag;
+  if (!drag || !els.figurePopover) {
+    return;
+  }
+
+  const nextLeft = clamp(drag.left + event.clientX - drag.startX, 8, window.innerWidth - els.figurePopover.offsetWidth - 8);
+  const nextTop = clamp(drag.top + event.clientY - drag.startY, 8, window.innerHeight - els.figurePopover.offsetHeight - 8);
+  els.figurePopover.style.left = `${nextLeft}px`;
+  els.figurePopover.style.top = `${nextTop}px`;
+}
+
+function finishFigurePopoverDrag(event) {
+  const drag = state.figurePopoverDrag;
+  if (!drag) {
+    return;
+  }
+
+  els.figurePopover?.releasePointerCapture?.(drag.pointerId || event.pointerId);
+  state.figurePopoverDrag = null;
 }
 
 function renderCitationPopover(citation) {
@@ -2365,6 +2579,7 @@ function showCitationPopover(citation, rect) {
   }
 
   hideSelectionPopover();
+  hideFigurePopover();
   hideHighlightPopover();
   state.activeCitation = citation;
   renderCitationPopover(citation);
@@ -2726,6 +2941,10 @@ els.figurePopover?.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
+els.figurePopover?.addEventListener("pointerdown", startFigurePopoverDrag);
+window.addEventListener("pointermove", moveFigurePopover);
+window.addEventListener("pointerup", finishFigurePopoverDrag);
+
 els.highlightPopover?.addEventListener("click", (event) => {
   if (event.target.closest?.("[data-explain-highlight]")) {
     explainActiveHighlight().catch((error) => {
@@ -2739,6 +2958,10 @@ els.highlightPopover?.addEventListener("click", (event) => {
 });
 
 els.figurePopover?.addEventListener("click", (event) => {
+  if (event.target.closest?.("[data-close-figure]")) {
+    hideFigurePopover();
+    return;
+  }
   if (event.target.closest?.("[data-add-active-figure]")) {
     addFigureToChat(state.activeFigure);
     hideFigurePopover();
@@ -2758,13 +2981,6 @@ els.citationPopover?.addEventListener("click", (event) => {
 
 els.refreshButton?.addEventListener("click", () => {
   refreshPapersFromCache().catch((error) => {
-    hideToast();
-    showToast(error.message || String(error));
-  });
-});
-
-els.figuresButton?.addEventListener("click", () => {
-  analyzeFiguresInReader(false).catch((error) => {
     hideToast();
     showToast(error.message || String(error));
   });
@@ -2805,8 +3021,8 @@ els.chatInput?.addEventListener("keydown", submitChatOnEnter);
 syncPanelToggles();
 resizeChatInput();
 
-els.chatResizeHandle?.addEventListener("pointerdown", startChatPanelResize);
-els.chatResizeHandle?.addEventListener("keydown", (event) => {
+els.summaryResizeHandle?.addEventListener("pointerdown", startSummaryPanelResize);
+els.summaryResizeHandle?.addEventListener("keydown", (event) => {
   if (!["ArrowUp", "ArrowDown"].includes(event.key)) {
     return;
   }
@@ -2814,19 +3030,19 @@ els.chatResizeHandle?.addEventListener("keydown", (event) => {
   event.preventDefault();
   const direction = event.key === "ArrowUp" ? -1 : 1;
   const panelTop = els.assistantPanel?.getBoundingClientRect().top || 0;
-  setChatPanelSplit(panelTop + currentSummaryPanelHeight() + direction * 24);
+  setSummaryPanelSplit(panelTop + currentSummaryPanelHeight() + direction * 24);
 });
 
-els.takeawaysResizeHandle?.addEventListener("pointerdown", startTakeawaysResize);
-els.takeawaysResizeHandle?.addEventListener("keydown", (event) => {
+els.chatResizeHandle?.addEventListener("pointerdown", startTakeawaysPanelResize);
+els.chatResizeHandle?.addEventListener("keydown", (event) => {
   if (!["ArrowUp", "ArrowDown"].includes(event.key)) {
     return;
   }
 
   event.preventDefault();
   const direction = event.key === "ArrowUp" ? -1 : 1;
-  const panelTop = els.takeawaysTab?.getBoundingClientRect().top || 0;
-  setTakeawaysHeight(panelTop + currentTakeawaysHeight() + direction * 24);
+  const panelTop = els.takeawaysSection?.getBoundingClientRect().top || 0;
+  setTakeawaysPanelSplit(panelTop + currentTakeawaysHeight() + direction * 24);
 });
 
 loadSettings()
