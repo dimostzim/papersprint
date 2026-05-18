@@ -1053,8 +1053,8 @@ function renderPaperDetails(paper) {
       allowFigure: false,
       showEvidence: false,
       showHighlightLinks: false,
-      expandToParagraph: true,
-      maxTokens: 220,
+      exactEvidence: true,
+      maxTokens: 320,
       flash: true,
     });
   }
@@ -1237,33 +1237,96 @@ function matchedTokenSpan(tokenEntries, queryTokens) {
   return null;
 }
 
+function medianNumber(values, fallback = 0) {
+  if (!values.length) {
+    return fallback;
+  }
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function wordEntryCenterY(entry) {
+  return (entry.word.cssRect[1] + entry.word.cssRect[3]) / 2;
+}
+
+function lineFromWordEntries(entries) {
+  const rects = entries.map((entry) => entry.word.cssRect);
+  return {
+    centerY: rects.reduce((sum, rect) => sum + (rect[1] + rect[3]) / 2, 0) / rects.length,
+    top: Math.min(...rects.map((rect) => rect[1])),
+    bottom: Math.max(...rects.map((rect) => rect[3])),
+    left: Math.min(...rects.map((rect) => rect[0])),
+    right: Math.max(...rects.map((rect) => rect[2])),
+    entries: [...entries].sort((left, right) => left.index - right.index),
+  };
+}
+
+function splitWordLineEntries(entries) {
+  const sortedEntries = [...entries].sort((left, right) => left.word.cssRect[0] - right.word.cssRect[0]);
+  if (sortedEntries.length <= 1) {
+    return [sortedEntries];
+  }
+
+  const heights = sortedEntries.map((entry) => Math.max(1, entry.word.cssRect[3] - entry.word.cssRect[1]));
+  const medianHeight = medianNumber(heights, 10);
+  const widths = sortedEntries.map((entry) => Math.max(1, entry.word.cssRect[2] - entry.word.cssRect[0]));
+  const medianWidth = medianNumber(widths, 12);
+  const gaps = sortedEntries
+    .slice(1)
+    .map((entry, index) => entry.word.cssRect[0] - sortedEntries[index].word.cssRect[2])
+    .filter((gap) => gap > 0);
+  const medianGap = medianNumber(gaps, 4);
+  const columnGapThreshold = gaps.length >= 3
+    ? Math.max(12, medianHeight * 1.2, medianGap * 3)
+    : Math.max(12, medianHeight * 1.2, medianWidth * 1.8);
+  const groups = [];
+  let current = [sortedEntries[0]];
+
+  for (const entry of sortedEntries.slice(1)) {
+    const previousEntry = current[current.length - 1];
+    const gap = entry.word.cssRect[0] - previousEntry.word.cssRect[2];
+    if (gap > columnGapThreshold) {
+      groups.push(current);
+      current = [entry];
+    } else {
+      current.push(entry);
+    }
+  }
+  groups.push(current);
+  return groups;
+}
+
+function sameColumnLine(left, right) {
+  const overlap = Math.min(left.right, right.right) - Math.max(left.left, right.left);
+  const minWidth = Math.min(Math.max(1, left.right - left.left), Math.max(1, right.right - right.left));
+  return overlap >= Math.max(8, minWidth * 0.2);
+}
+
 function wordLineGroups(wordEntries) {
-  const lines = [];
+  const yLines = [];
   const sortedEntries = [...wordEntries].sort((left, right) => {
-    const leftCenter = (left.word.cssRect[1] + left.word.cssRect[3]) / 2;
-    const rightCenter = (right.word.cssRect[1] + right.word.cssRect[3]) / 2;
+    const leftCenter = wordEntryCenterY(left);
+    const rightCenter = wordEntryCenterY(right);
     return leftCenter - rightCenter || left.word.cssRect[0] - right.word.cssRect[0];
   });
 
   for (const entry of sortedEntries) {
-    const centerY = (entry.word.cssRect[1] + entry.word.cssRect[3]) / 2;
-    const line = lines.find((item) => Math.abs(item.centerY - centerY) <= 5);
+    const centerY = wordEntryCenterY(entry);
+    const line = yLines.find((item) => Math.abs(item.centerY - centerY) <= 5);
     if (line) {
       line.entries.push(entry);
       line.centerY = (line.centerY * (line.entries.length - 1) + centerY) / line.entries.length;
-      line.top = Math.min(line.top, entry.word.cssRect[1]);
-      line.bottom = Math.max(line.bottom, entry.word.cssRect[3]);
     } else {
-      lines.push({
+      yLines.push({
         centerY,
-        top: entry.word.cssRect[1],
-        bottom: entry.word.cssRect[3],
         entries: [entry],
       });
     }
   }
 
-  return lines.sort((left, right) => left.top - right.top);
+  return yLines
+    .flatMap((line) => splitWordLineEntries(line.entries).map(lineFromWordEntries))
+    .sort((left, right) => left.top - right.top || left.left - right.left);
 }
 
 function sentenceBoundaryAfter(wordEntries, index) {
@@ -1282,21 +1345,34 @@ function sentenceBoundaryAfter(wordEntries, index) {
 }
 
 function sentenceWordsForMatch(wordEntries, startIndex, endIndex) {
-  const maxSentenceWords = 90;
+  return sentenceEntriesForMatch(wordEntries, startIndex, endIndex).map((entry) => entry.word);
+}
+
+function sentenceEntriesForMatch(wordEntries, startIndex, endIndex, options = {}) {
+  const maxSentenceWords = options.maxWords || 90;
+  const maxExpansionWords = options.maxExpansionWords ?? Number.POSITIVE_INFINITY;
   let first = startIndex;
   let last = endIndex;
 
-  while (first > 0 && !sentenceBoundaryAfter(wordEntries, first - 1)) {
+  while (
+    first > 0
+    && startIndex - first < maxExpansionWords
+    && !sentenceBoundaryAfter(wordEntries, first - 1)
+  ) {
     first -= 1;
   }
-  while (last < wordEntries.length && !sentenceBoundaryAfter(wordEntries, last - 1)) {
+  while (
+    last < wordEntries.length
+    && last - endIndex < maxExpansionWords
+    && !sentenceBoundaryAfter(wordEntries, last - 1)
+  ) {
     last += 1;
   }
 
   if (last - first > maxSentenceWords) {
-    return wordEntries.slice(startIndex, endIndex).map((entry) => entry.word);
+    return wordEntries.slice(startIndex, endIndex);
   }
-  return wordEntries.slice(first, last).map((entry) => entry.word);
+  return wordEntries.slice(first, last);
 }
 
 function sentenceBlocksForWordEntries(wordEntries) {
@@ -1331,29 +1407,59 @@ function paragraphWordsForMatch(wordEntries, startIndex, endIndex) {
   const medianLineHeight = lineHeights[Math.floor(lineHeights.length / 2)] || 10;
   const maxParagraphGap = Math.max(5, medianLineHeight * 0.75);
   const maxParagraphLines = 8;
-  let firstLine = Math.min(...matchedLineIndexes);
-  let lastLine = Math.max(...matchedLineIndexes);
+  const anchorLineIndex = matchedLineIndexes.reduce((bestIndex, lineIndex) => {
+    const bestCount = lines[bestIndex].entries.filter((entry) => matchedIndexes.has(entry.index)).length;
+    const lineCount = lines[lineIndex].entries.filter((entry) => matchedIndexes.has(entry.index)).length;
+    return lineCount > bestCount ? lineIndex : bestIndex;
+  }, matchedLineIndexes[0]);
+  const anchorLine = lines[anchorLineIndex];
+  const columnLines = lines
+    .map((line, index) => ({ line, index }))
+    .filter((item) => item.index === anchorLineIndex || sameColumnLine(item.line, anchorLine));
+  const matchedColumnLineIndexes = columnLines
+    .map((item, index) => (matchedLineIndexes.includes(item.index) ? index : null))
+    .filter((index) => index !== null);
+  let firstLine = Math.min(...matchedColumnLineIndexes);
+  let lastLine = Math.max(...matchedColumnLineIndexes);
 
   while (
     firstLine > 0
     && lastLine - firstLine + 1 < maxParagraphLines
-    && lines[firstLine].top - lines[firstLine - 1].bottom <= maxParagraphGap
+    && columnLines[firstLine].line.top - columnLines[firstLine - 1].line.bottom <= maxParagraphGap
+    && sameColumnLine(columnLines[firstLine].line, columnLines[firstLine - 1].line)
   ) {
     firstLine -= 1;
   }
   while (
-    lastLine < lines.length - 1
+    lastLine < columnLines.length - 1
     && lastLine - firstLine + 1 < maxParagraphLines
-    && lines[lastLine + 1].top - lines[lastLine].bottom <= maxParagraphGap
+    && columnLines[lastLine + 1].line.top - columnLines[lastLine].line.bottom <= maxParagraphGap
+    && sameColumnLine(columnLines[lastLine].line, columnLines[lastLine + 1].line)
   ) {
     lastLine += 1;
   }
 
-  return lines
+  const paragraphEntries = columnLines
     .slice(firstLine, lastLine + 1)
-    .flatMap((line) => line.entries)
-    .sort((left, right) => left.index - right.index)
-    .map((entry) => entry.word);
+    .flatMap((item) => item.line.entries)
+    .sort((left, right) => left.index - right.index);
+  const paragraphIndexes = new Set(paragraphEntries.map((entry) => entry.index));
+  const columnEntries = columnLines
+    .flatMap((item) => item.line.entries)
+    .sort((left, right) => left.index - right.index);
+  const paragraphPositions = columnEntries
+    .map((entry, index) => (paragraphIndexes.has(entry.index) ? index : null))
+    .filter((index) => index !== null);
+  if (!paragraphPositions.length) {
+    return paragraphEntries.map((entry) => entry.word);
+  }
+
+  return sentenceEntriesForMatch(
+    columnEntries,
+    Math.min(...paragraphPositions),
+    Math.max(...paragraphPositions) + 1,
+    { maxExpansionWords: 32, maxWords: 160 },
+  ).map((entry) => entry.word);
 }
 
 function paragraphBlocksForWordEntries(wordEntries) {
@@ -1366,18 +1472,27 @@ function paragraphBlocksForWordEntries(wordEntries) {
   const medianLineHeight = lineHeights[Math.floor(lineHeights.length / 2)] || 10;
   const maxParagraphGap = Math.max(5, medianLineHeight * 0.75);
   const blocks = [];
-  let currentLines = [lines[0]];
 
-  for (const line of lines.slice(1)) {
-    const previousLine = currentLines[currentLines.length - 1];
-    if (line.top - previousLine.bottom > maxParagraphGap) {
-      blocks.push(currentLines);
-      currentLines = [line];
+  for (const line of lines) {
+    let matchingBlock = null;
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      const previousLine = blocks[index][blocks[index].length - 1];
+      if (!sameColumnLine(previousLine, line)) {
+        continue;
+      }
+      const verticalGap = line.top - previousLine.bottom;
+      if (verticalGap <= maxParagraphGap) {
+        matchingBlock = blocks[index];
+      }
+      break;
+    }
+
+    if (matchingBlock) {
+      matchingBlock.push(line);
     } else {
-      currentLines.push(line);
+      blocks.push([line]);
     }
   }
-  blocks.push(currentLines);
 
   return blocks.map((block) => block.flatMap((line) => line.entries).sort((left, right) => left.index - right.index));
 }
@@ -1413,6 +1528,59 @@ function summaryTokens(value) {
       .match(/[a-z][a-z0-9]{2,}/g)
       ?.filter((token) => !SUMMARY_STOP_WORDS.has(token)) || [],
   );
+}
+
+function fuzzyBlockContextWords(block, queryTokens) {
+  const lines = wordLineGroups(block);
+  if (lines.length <= 10) {
+    return block.map((entry) => entry.word);
+  }
+
+  const queryTokenSet = new Set(queryTokens);
+  const scoredLines = lines.map((line, index) => {
+    const sharedTokens = new Set(
+      line.entries
+        .map((entry) => entry.token)
+        .filter((token) => queryTokenSet.has(token)),
+    );
+    return { index, score: sharedTokens.size };
+  });
+  const bestLine = scoredLines.reduce(
+    (best, item) => (item.score > best.score ? item : best),
+    scoredLines[0],
+  );
+  const maxContextLines = 8;
+  let firstLine = Math.max(0, bestLine.index - 2);
+  let lastLine = Math.min(lines.length - 1, bestLine.index + maxContextLines - 3);
+
+  while (lastLine - firstLine + 1 < maxContextLines && firstLine > 0) {
+    firstLine -= 1;
+  }
+  while (lastLine - firstLine + 1 < maxContextLines && lastLine < lines.length - 1) {
+    lastLine += 1;
+  }
+
+  const contextEntries = lines
+    .slice(firstLine, lastLine + 1)
+    .flatMap((line) => line.entries)
+    .sort((left, right) => left.index - right.index);
+  const contextIndexes = new Set(contextEntries.map((entry) => entry.index));
+  const blockEntries = lines
+    .flatMap((line) => line.entries)
+    .sort((left, right) => left.index - right.index);
+  const contextPositions = blockEntries
+    .map((entry, index) => (contextIndexes.has(entry.index) ? index : null))
+    .filter((index) => index !== null);
+
+  if (!contextPositions.length) {
+    return contextEntries.map((entry) => entry.word);
+  }
+  return sentenceEntriesForMatch(
+    blockEntries,
+    Math.min(...contextPositions),
+    Math.max(...contextPositions) + 1,
+    { maxExpansionWords: 24, maxWords: 140 },
+  ).map((entry) => entry.word);
 }
 
 function summaryEvidenceScore(item, highlight) {
@@ -1535,12 +1703,13 @@ function fuzzyParagraphEvidenceTarget(tokens, options = {}) {
       }
       const score = shared / queryTokens.length;
       if (score > bestScore) {
+        const contextWords = fuzzyBlockContextWords(block, queryTokens);
         bestScore = score;
         bestTarget = {
           type: "text",
           label: "Text",
           pageNumber,
-          rects: mergeWordRects(block.map((entry) => entry.word), "pdfRect"),
+          rects: mergeWordRects(contextWords, "pdfRect"),
           flash: Boolean(options.flash),
         };
       }
@@ -1628,13 +1797,15 @@ function textEvidenceTargetForValue(value, options = {}) {
     }
   }
 
-  const query = normalizedEvidenceValue(value).slice(0, 120);
-  if (query.length < 24) {
-    return null;
-  }
-  for (const [pageNumber, pageText] of state.pageTexts.entries()) {
-    if (normalizedEvidenceValue(pageText).includes(query)) {
-      return { type: "page", label: "Text", pageNumber };
+  if (options.allowPageFallback !== false) {
+    const query = normalizedEvidenceValue(value).slice(0, 120);
+    if (query.length < 24) {
+      return null;
+    }
+    for (const [pageNumber, pageText] of state.pageTexts.entries()) {
+      if (normalizedEvidenceValue(pageText).includes(query)) {
+        return { type: "page", label: "Text", pageNumber };
+      }
     }
   }
   return null;
@@ -1642,6 +1813,32 @@ function textEvidenceTargetForValue(value, options = {}) {
 
 function textEvidenceTargetForItem(item, options = {}) {
   const evidenceHint = summaryItemEvidenceHint(item);
+  if (options.exactEvidence) {
+    const exactOptions = {
+      ...options,
+      allowPageFallback: false,
+      expandToParagraph: false,
+      expandToSentence: false,
+    };
+    const evidenceTarget = textEvidenceTargetForValue(evidenceHint, exactOptions);
+    if (evidenceTarget) {
+      return evidenceTarget;
+    }
+
+    for (const highlightIndex of linkedHighlightIndexesForItem(item)) {
+      const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
+      const highlightTarget = textEvidenceTargetForValue(highlight?.snippet || "", {
+        ...exactOptions,
+        maxTokens: 140,
+      });
+      if (highlightTarget) {
+        return highlightTarget;
+      }
+    }
+
+    return textEvidenceTargetForValue(summaryItemText(item), { ...exactOptions, maxTokens: 80 });
+  }
+
   return textEvidenceTargetForValue(evidenceHint, options)
     || textEvidenceTargetForValue(summaryItemText(item), { ...options, maxTokens: 36 });
 }
@@ -1663,7 +1860,10 @@ function summaryEvidenceTargetForItem(item, options = {}) {
   }
 
   const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
-  return textEvidenceTargetForValue(highlight?.snippet || "", { ...options, expandToParagraph: true })
+  const highlightOptions = options.exactEvidence
+    ? { ...options, allowPageFallback: false, expandToParagraph: false, expandToSentence: false, maxTokens: 140 }
+    : { ...options, expandToParagraph: true };
+  return textEvidenceTargetForValue(highlight?.snippet || "", highlightOptions)
     || { type: "highlight", label: "Text", highlightIndex };
 }
 
@@ -2766,26 +2966,8 @@ function nearestWordIndex(words, x, y) {
 }
 
 function mergeWordRects(words, rectKey) {
-  const lines = [];
-  const sortedWords = [...words].sort((left, right) => {
-    const leftCenter = (left.cssRect[1] + left.cssRect[3]) / 2;
-    const rightCenter = (right.cssRect[1] + right.cssRect[3]) / 2;
-    return leftCenter - rightCenter || left.cssRect[0] - right.cssRect[0];
-  });
-
-  for (const word of sortedWords) {
-    const centerY = (word.cssRect[1] + word.cssRect[3]) / 2;
-    const line = lines.find((item) => Math.abs(item.centerY - centerY) <= 5);
-    if (line) {
-      line.words.push(word);
-      line.centerY = (line.centerY * (line.words.length - 1) + centerY) / line.words.length;
-    } else {
-      lines.push({ centerY, words: [word] });
-    }
-  }
-
-  return lines.map((line) => {
-    const rects = line.words.map((word) => word[rectKey]);
+  return wordLineGroups(words.map((word, index) => ({ word, index }))).map((line) => {
+    const rects = line.entries.map((entry) => entry.word[rectKey]);
     return [
       roundRectValue(Math.min(...rects.map((rect) => rect[0]))),
       roundRectValue(Math.min(...rects.map((rect) => rect[1]))),
