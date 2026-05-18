@@ -1,3 +1,6 @@
+import threading
+import time
+
 import fitz
 
 from app.figures import (
@@ -112,3 +115,96 @@ def test_analyze_figures_only_calls_vision_for_candidate_pages(tmp_path, monkeyp
     assert calls == [2]
     assert result["figures"] == []
     assert "skipped 1 pages" in result["figure_warnings"][0]
+
+
+def test_analyze_figures_runs_candidate_pages_in_parallel(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    for index in range(6):
+        doc.new_page(width=240, height=240).insert_text((40, 40), f"Figure {index + 1}: Benchmark result")
+    doc.save(pdf_path)
+    doc.close()
+    extracted = ExtractedPaper(
+        "Paper",
+        "",
+        [
+            {"page_number": index + 1, "text": f"Figure {index + 1}: Benchmark result"}
+            for index in range(6)
+        ],
+        [],
+    )
+    lock = threading.Lock()
+    in_flight = 0
+    max_in_flight = 0
+
+    def fake_analyze_page(page_number, page_text, image_path, provider, api_key=None, model=None, reasoning_effort=None):
+        nonlocal in_flight, max_in_flight
+        with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        time.sleep(0.05)
+        with lock:
+            in_flight -= 1
+        return {"provider_used": "test", "figures": []}
+
+    monkeypatch.setenv("FIGURE_ANALYSIS_WORKERS", "8")
+    monkeypatch.setattr("app.figures.analyze_page_figures", fake_analyze_page)
+
+    result = analyze_figures(pdf_path, extracted, "paper-1", tmp_path / "figures", "codex")
+
+    assert result["figures"] == []
+    assert max_in_flight > 1
+    assert max_in_flight <= 5
+
+
+def test_analyze_figures_reports_progress_as_pages_finish(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    for index in range(2):
+        doc.new_page(width=240, height=240).insert_text((40, 40), f"Figure {index + 1}: Benchmark result")
+    doc.save(pdf_path)
+    doc.close()
+    extracted = ExtractedPaper(
+        "Paper",
+        "",
+        [
+            {"page_number": 1, "text": "Figure 1: Benchmark result"},
+            {"page_number": 2, "text": "Figure 2: Benchmark result"},
+        ],
+        [],
+    )
+    progress = []
+
+    def fake_analyze_page(page_number, page_text, image_path, provider, api_key=None, model=None, reasoning_effort=None):
+        if page_number == 1:
+            time.sleep(0.05)
+        return {
+            "provider_used": "test",
+            "figures": [
+                {
+                    "type": "figure",
+                    "label": f"Figure {page_number}",
+                    "title": f"Result {page_number}",
+                    "bbox_pct": [10, 10, 90, 90],
+                    "explanation": "Shows a result.",
+                    "why_it_matters": "It is evidence.",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.figures.analyze_page_figures", fake_analyze_page)
+
+    result = analyze_figures(
+        pdf_path,
+        extracted,
+        "paper-1",
+        tmp_path / "figures",
+        "codex",
+        on_progress=lambda payload: progress.append(payload),
+    )
+
+    figure_counts = [len(payload["figures"]) for payload in progress]
+    assert result["figures"]
+    assert figure_counts[0] == 0
+    assert 1 in figure_counts
+    assert figure_counts[-1] == 2

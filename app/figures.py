@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import fitz
 
@@ -217,12 +218,14 @@ def analyze_figures(
     api_key: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     paper_dir = figure_directory(figures_dir, paper_id)
     paper_dir.mkdir(parents=True, exist_ok=True)
 
     max_pages = int_env("FIGURE_ANALYSIS_MAX_PAGES", 20)
     max_figures = int_env("FIGURE_ANALYSIS_MAX_FIGURES", 40)
+    max_workers = int_env("FIGURE_ANALYSIS_WORKERS", 5)
     warnings = []
     figures = []
     provider_used = "unknown"
@@ -238,15 +241,26 @@ def analyze_figures(
     if not pages:
         warnings.append("No pages with figure/table signals were detected.")
 
-    for page in pages:
-        if len(figures) >= max_figures:
-            warnings.append(f"Figure analysis stopped after {max_figures} visuals.")
-            break
+    completed_pages = 0
 
+    def progress_payload() -> dict[str, Any]:
+        return {
+            "figures": [dict(figure) for figure in figures],
+            "figure_warnings": list(warnings),
+            "figure_provider_used": provider_used,
+            "figure_analysis_completed_pages": completed_pages,
+            "figure_analysis_total_pages": len(pages),
+        }
+
+    def emit_progress() -> None:
+        if on_progress:
+            on_progress(progress_payload())
+
+    def analyze_candidate_page(page: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         page_number = int(page["page_number"])
         page_image = paper_dir / f"page-{page_number}.jpg"
         render_page_image(pdf_path, page_number, page_image)
-        payload = analyze_page_figures(
+        return page_number, analyze_page_figures(
             page_number,
             str(page.get("text", "")),
             page_image,
@@ -255,20 +269,46 @@ def analyze_figures(
             model,
             reasoning_effort,
         )
-        provider_used = str(payload.get("provider_used", provider_used))
 
-        for page_index, figure in enumerate(normalize_figure_items(payload, page_number), start=1):
-            if len(figures) >= max_figures:
-                break
-            figure_id = f"p{page_number}-{page_index}"
-            image_file = f"{figure_id}.jpg"
-            crop_figure_image(pdf_path, page_number, figure["bbox_pct"], paper_dir / image_file)
-            figure["id"] = figure_id
-            figure["image_file"] = image_file
-            figures.append(figure)
+    emit_progress()
+
+    worker_count = min(max_workers, 5, len(pages))
+    if worker_count > 0:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(analyze_candidate_page, page) for page in pages]
+            for future in as_completed(futures):
+                page_number, payload = future.result()
+                completed_pages += 1
+                if len(figures) >= max_figures:
+                    emit_progress()
+                    continue
+                provider_used = str(payload.get("provider_used", provider_used))
+
+                stopped = False
+                for page_index, figure in enumerate(normalize_figure_items(payload, page_number), start=1):
+                    if len(figures) >= max_figures:
+                        warnings.append(f"Figure analysis stopped after {max_figures} visuals.")
+                        stopped = True
+                        break
+                    figure_id = f"p{page_number}-{page_index}"
+                    image_file = f"{figure_id}.jpg"
+                    crop_figure_image(pdf_path, page_number, figure["bbox_pct"], paper_dir / image_file)
+                    figure["id"] = figure_id
+                    figure["image_file"] = image_file
+                    figures.append(figure)
+                emit_progress()
+                if stopped:
+                    continue
+
+    if len(figures) >= max_figures:
+        seen_warning = f"Figure analysis stopped after {max_figures} visuals."
+        if seen_warning not in warnings:
+            warnings.append(seen_warning)
 
     return {
         "figures": figures,
         "figure_warnings": warnings,
         "figure_provider_used": provider_used,
+        "figure_analysis_completed_pages": completed_pages,
+        "figure_analysis_total_pages": len(pages),
     }

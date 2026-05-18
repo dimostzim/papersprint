@@ -1,4 +1,5 @@
 import json
+import time
 
 import fitz
 from fastapi.testclient import TestClient
@@ -705,6 +706,56 @@ def test_update_manual_highlight_regrounds_to_selected_page(tmp_path, monkeypatc
     assert highlight["page_number"] == 2
     assert highlight["rects"] != [[1, 1, 2, 2]]
     assert highlight["rects"][0][1] > 100
+
+
+def test_background_figure_analysis_returns_running_status(tmp_path, monkeypatch):
+    papers_dir = tmp_path / "papers"
+    figures_dir = tmp_path / "figures"
+    cache_papers_dir = tmp_path / "cache-papers"
+    cache_records_dir = tmp_path / "cache-records"
+    cache_figures_dir = tmp_path / "cache-figures"
+    for directory in (papers_dir, figures_dir, cache_papers_dir, cache_records_dir, cache_figures_dir):
+        directory.mkdir()
+    monkeypatch.setattr(main, "PAPERS_DIR", papers_dir)
+    monkeypatch.setattr(main, "FIGURES_DIR", figures_dir)
+    monkeypatch.setattr(main, "CACHE_PAPERS_DIR", cache_papers_dir)
+    monkeypatch.setattr(main, "CACHE_RECORDS_DIR", cache_records_dir)
+    monkeypatch.setattr(main, "CACHE_FIGURES_DIR", cache_figures_dir)
+    main.PAPERS.clear()
+
+    pdf_path = papers_dir / "paper.pdf"
+    pdf_path.write_bytes(make_pdf_bytes("Figure 1: Result plot."))
+    main.PAPERS["paper-1"] = {
+        "id": "paper-1",
+        "filename": "paper.pdf",
+        "stored_pdf": "paper.pdf",
+        "digest": "digest-1",
+        "title": "Readable paper",
+        "highlights": [],
+        "figures": [],
+        "figure_warnings": [],
+        "figure_provider_used": "unknown",
+        "citations": [],
+        "page_sizes": [],
+        "analysis_status": "complete",
+    }
+
+    def fake_finish_figure_analysis(*args, **kwargs):
+        time.sleep(0.05)
+
+    monkeypatch.setattr(main, "finish_figure_analysis", fake_finish_figure_analysis)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/papers/paper-1/figures/analyze",
+        json={"provider": "codex", "background": True},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "running"
+    assert payload["figures"] == []
+    assert main.PAPERS["paper-1"]["figure_analysis_status"] == "running"
 
 
 def test_chat_passes_figure_context(monkeypatch):

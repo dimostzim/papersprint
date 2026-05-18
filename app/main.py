@@ -70,6 +70,7 @@ class FigureAnalysisRequest(BaseModel):
     model: str | None = None
     reasoning_effort: str | None = None
     force: bool = False
+    background: bool = False
 
 
 class AnalysisRequest(BaseModel):
@@ -133,6 +134,7 @@ def restore_cached_figures(digest: str, paper_id: str, paper: dict[str, Any], pd
         paper["figures"] = []
         paper["figure_warnings"] = paper.get("figure_warnings", [])
         paper["figure_provider_used"] = paper.get("figure_provider_used", "unknown")
+        paper["figure_analysis_status"] = paper.get("figure_analysis_status", "idle")
         return
 
     if pdf_path and pdf_path.exists():
@@ -146,6 +148,7 @@ def restore_cached_figures(digest: str, paper_id: str, paper: dict[str, Any], pd
     paper["figures"] = []
     paper["figure_warnings"] = []
     paper["figure_provider_used"] = "unknown"
+    paper["figure_analysis_status"] = "idle"
 
 
 def restore_cached_figure_analysis(
@@ -165,6 +168,7 @@ def restore_cached_figure_analysis(
     paper["figures"] = cached.get("figures", [])
     paper["figure_warnings"] = cached.get("figure_warnings", [])
     paper["figure_provider_used"] = cached.get("figure_provider_used", "unknown")
+    paper["figure_analysis_status"] = "complete"
     restore_cached_figures(digest, paper_id, paper, pdf_path)
 
 
@@ -303,6 +307,18 @@ def public_figures(paper_id: str, figures: list[dict[str, Any]]) -> list[dict[st
     return public_items
 
 
+def figure_analysis_response(paper_id: str, paper: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "figures": public_figures(paper_id, paper.get("figures", [])),
+        "warnings": paper.get("figure_warnings", []),
+        "provider_used": paper.get("figure_provider_used", "unknown"),
+        "status": paper.get("figure_analysis_status", "complete" if paper.get("figures") else "idle"),
+        "error": paper.get("figure_analysis_error", ""),
+        "completed_pages": paper.get("figure_analysis_completed_pages", 0),
+        "total_pages": paper.get("figure_analysis_total_pages", 0),
+    }
+
+
 def clean_highlight_record(highlight: dict[str, Any]) -> dict[str, Any] | None:
     snippet = " ".join(str(highlight.get("snippet", "")).split()).strip()
     if not snippet:
@@ -372,6 +388,10 @@ def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[s
         "analysis_error": paper.get("analysis_error", ""),
         "highlight_count": len(highlights),
         "figure_count": len(paper.get("figures", [])),
+        "figure_analysis_status": paper.get("figure_analysis_status", "complete" if paper.get("figures") else "idle"),
+        "figure_analysis_error": paper.get("figure_analysis_error", ""),
+        "figure_analysis_completed_pages": paper.get("figure_analysis_completed_pages", 0),
+        "figure_analysis_total_pages": paper.get("figure_analysis_total_pages", 0),
         "citation_count": len(paper.get("citations", [])),
     }
     if include_details:
@@ -388,6 +408,10 @@ def public_paper(paper: dict[str, Any], include_details: bool = False) -> dict[s
                 "figures": public_figures(paper["id"], paper.get("figures", [])),
                 "figure_warnings": paper.get("figure_warnings", []),
                 "figure_provider_used": paper.get("figure_provider_used", "unknown"),
+                "figure_analysis_status": paper.get("figure_analysis_status", "complete" if paper.get("figures") else "idle"),
+                "figure_analysis_error": paper.get("figure_analysis_error", ""),
+                "figure_analysis_completed_pages": paper.get("figure_analysis_completed_pages", 0),
+                "figure_analysis_total_pages": paper.get("figure_analysis_total_pages", 0),
                 "citations": paper.get("citations", []),
                 "questions": paper.get("questions", []),
                 "page_sizes": paper.get("page_sizes", []),
@@ -428,6 +452,10 @@ def build_paper_record(
         "figures": [],
         "figure_warnings": [],
         "figure_provider_used": "unknown",
+        "figure_analysis_status": "idle",
+        "figure_analysis_error": "",
+        "figure_analysis_completed_pages": 0,
+        "figure_analysis_total_pages": 0,
         "citations": citations,
         "citation_version": CITATION_VERSION,
         "questions": analysis.get("questions", []),
@@ -474,6 +502,10 @@ def build_uploaded_paper_record(
         "figures": [],
         "figure_warnings": [],
         "figure_provider_used": "unknown",
+        "figure_analysis_status": "idle",
+        "figure_analysis_error": "",
+        "figure_analysis_completed_pages": 0,
+        "figure_analysis_total_pages": 0,
         "citations": citations,
         "citation_version": CITATION_VERSION,
         "questions": [],
@@ -517,8 +549,60 @@ def finish_paper_analysis(
     paper["figures"] = existing.get("figures", [])
     paper["figure_warnings"] = existing.get("figure_warnings", [])
     paper["figure_provider_used"] = existing.get("figure_provider_used", "unknown")
+    paper["figure_analysis_status"] = existing.get("figure_analysis_status", "complete" if paper["figures"] else "idle")
+    paper["figure_analysis_error"] = existing.get("figure_analysis_error", "")
+    paper["figure_analysis_completed_pages"] = existing.get("figure_analysis_completed_pages", 0)
+    paper["figure_analysis_total_pages"] = existing.get("figure_analysis_total_pages", 0)
     write_paper(paper)
     cache_paper(paper, pdf_path)
+
+
+def finish_figure_analysis(
+    pdf_path: Path,
+    paper_id: str,
+    provider: str | None,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> None:
+    def publish_progress(progress: dict[str, Any]) -> None:
+        latest = PAPERS.get(paper_id)
+        if not latest:
+            return
+        latest.update(progress)
+        latest["figure_analysis_status"] = "running"
+        latest["figure_analysis_error"] = ""
+        write_paper(latest)
+
+    try:
+        extracted = extract_pdf(pdf_path)
+        result = analyze_figures(
+            pdf_path,
+            extracted,
+            paper_id,
+            FIGURES_DIR,
+            provider,
+            api_key,
+            model,
+            reasoning_effort,
+            publish_progress,
+        )
+    except Exception as error:
+        latest = PAPERS.get(paper_id)
+        if latest:
+            latest["figure_analysis_status"] = "error"
+            latest["figure_analysis_error"] = str(error)
+            write_paper(latest)
+        return
+
+    latest = PAPERS.get(paper_id)
+    if not latest:
+        return
+    latest.update(result)
+    latest["figure_analysis_status"] = "complete"
+    latest["figure_analysis_error"] = ""
+    write_paper(latest)
+    cache_paper(latest, pdf_path)
 
 
 @app.get("/")
@@ -697,27 +781,48 @@ def get_paper_file(paper_id: str):
 
 @app.get("/api/papers/{paper_id}/figures")
 def get_figures(paper_id: str):
-    paper = read_paper(paper_id)
-    return {
-        "figures": public_figures(paper_id, paper.get("figures", [])),
-        "warnings": paper.get("figure_warnings", []),
-        "provider_used": paper.get("figure_provider_used", "unknown"),
-    }
+    return figure_analysis_response(paper_id, read_paper(paper_id))
 
 
 @app.post("/api/papers/{paper_id}/figures/analyze")
 async def analyze_paper_figures(paper_id: str, request: FigureAnalysisRequest):
     paper = read_paper(paper_id)
+    if paper.get("figure_analysis_status") == "running":
+        return figure_analysis_response(paper_id, paper)
     if paper.get("figures") and not request.force:
-        return {
-            "figures": public_figures(paper_id, paper.get("figures", [])),
-            "warnings": paper.get("figure_warnings", []),
-            "provider_used": paper.get("figure_provider_used", "unknown"),
-        }
+        return figure_analysis_response(paper_id, paper)
 
     pdf_path = PAPERS_DIR / paper["stored_pdf"]
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="PDF file not found.")
+
+    paper.update(
+        {
+            "figures": [],
+            "figure_warnings": [],
+            "figure_provider_used": "pending",
+            "figure_analysis_status": "running",
+            "figure_analysis_error": "",
+            "figure_analysis_completed_pages": 0,
+            "figure_analysis_total_pages": 0,
+        }
+    )
+    write_paper(paper)
+    if request.force:
+        shutil.rmtree(figure_directory(FIGURES_DIR, paper_id), ignore_errors=True)
+    if request.background:
+        asyncio.create_task(
+            asyncio.to_thread(
+                finish_figure_analysis,
+                pdf_path,
+                paper_id,
+                request.provider,
+                request.api_key,
+                request.model,
+                request.reasoning_effort,
+            )
+        )
+        return figure_analysis_response(paper_id, paper)
 
     try:
         extracted = await asyncio.to_thread(extract_pdf, pdf_path)
@@ -733,17 +838,20 @@ async def analyze_paper_figures(paper_id: str, request: FigureAnalysisRequest):
             request.reasoning_effort,
         )
     except Exception as error:
+        latest_paper = PAPERS.get(paper_id)
+        if latest_paper:
+            latest_paper["figure_analysis_status"] = "error"
+            latest_paper["figure_analysis_error"] = str(error)
+            write_paper(latest_paper)
         raise HTTPException(status_code=502, detail=str(error)) from error
 
     latest_paper = read_paper(paper_id)
     latest_paper.update(result)
+    latest_paper["figure_analysis_status"] = "complete"
+    latest_paper["figure_analysis_error"] = ""
     write_paper(latest_paper)
     cache_paper(latest_paper, pdf_path)
-    return {
-        "figures": public_figures(paper_id, latest_paper.get("figures", [])),
-        "warnings": latest_paper.get("figure_warnings", []),
-        "provider_used": latest_paper.get("figure_provider_used", "unknown"),
-    }
+    return figure_analysis_response(paper_id, latest_paper)
 
 
 @app.get("/api/papers/{paper_id}/figures/{figure_id}/image")
