@@ -18,8 +18,7 @@ load_dotenv()
 
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
-ANALYSIS_VERSION = 6
-ABSTRACT_END_RE = re.compile(r"(?:^|\n)\s*(?:\d+\s*\.?\s*)?introduction\b", re.IGNORECASE)
+ANALYSIS_VERSION = 7
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
@@ -111,9 +110,9 @@ Return JSON with exactly this shape:
 Highlight requirements:
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
 - Add a highlight only if it changes the reader's understanding of the task, novelty, method, evidence, or claim limitation.
-- Choose highlights from the paper body text below, not from the abstract.
+- Abstract highlights are allowed when they provide useful orientation, especially for goal, novelty, and main result.
 - Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, and limits when they exist.
-- If a claim appears in both the abstract and the body, choose the body sentence.
+- If an abstract sentence is the clearest compact statement of the paper's contribution or result, include it; otherwise prefer the more specific body sentence.
 - Do not highlight title, author, affiliation, contact, availability, license, preprint, or header/footer text.
 - Do not cluster the set in the opening motivation; later method, evaluation, result, and this-paper limitation passages are usually more useful.
 - Use the goal label for the task, problem statement, or motivating failure mode that this paper addresses.
@@ -133,7 +132,7 @@ Highlight requirements:
 
 Paper title guess: {extracted.title}
 
-Paper body text:
+Paper text:
 {text}
 """.strip()
 
@@ -159,9 +158,6 @@ def format_guided_reading_text(extracted: ExtractedPaper) -> str:
     for page in extracted.pages:
         page_number = int(page.get("page_number", len(parts) + 1))
         text = sanitize_prompt_text(str(page.get("text", ""))).strip()
-        if page_number == 1:
-            text = first_page_body_text(text)
-
         text, found_references = without_reference_section(text)
         text = normalize_text(text)
         if text:
@@ -170,15 +166,6 @@ def format_guided_reading_text(extracted: ExtractedPaper) -> str:
             break
 
     return "\n\n".join(parts) or format_analysis_text(extracted)
-
-
-def first_page_body_text(text: str) -> str:
-    intro_match = ABSTRACT_END_RE.search(text)
-    if intro_match:
-        return text[intro_match.start() :]
-    if re.search(r"\babstract\b", text, flags=re.IGNORECASE):
-        return ""
-    return text
 
 
 def without_reference_section(text: str) -> tuple[str, bool]:
@@ -391,53 +378,9 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
             for item in glossary[:10]
             if isinstance(item, dict) and item.get("term") and item.get("definition")
         ],
-        "highlights": limit_abstract_highlights(normalized_highlights, extracted),
+        "highlights": normalized_highlights,
         "questions": list_of_strings("questions", 8),
     }
-
-
-def abstract_region_text(extracted: ExtractedPaper) -> str:
-    source = ""
-    if extracted.pages:
-        source = str(extracted.pages[0].get("text", ""))
-    if not source:
-        source = extracted.full_text
-
-    match = re.search(r"\babstract\b", source, flags=re.IGNORECASE)
-    if not match:
-        return ""
-
-    remainder = source[match.end() :]
-    end_match = ABSTRACT_END_RE.search(remainder)
-    if end_match:
-        return normalize_text(remainder[: end_match.start()])
-    return normalize_text(remainder[:3000])
-
-
-def snippet_in_text(snippet: str, text: str) -> bool:
-    clean_snippet = normalize_text(snippet)
-    clean_text = normalize_text(text)
-    if not clean_snippet or not clean_text:
-        return False
-    if clean_snippet.lower() in clean_text.lower():
-        return True
-    return score_match(clean_snippet, clean_text) >= 0.82
-
-
-def limit_abstract_highlights(highlights: list[dict[str, Any]], extracted: ExtractedPaper) -> list[dict[str, Any]]:
-    abstract_text = abstract_region_text(extracted)
-    if not abstract_text:
-        return highlights
-
-    abstract_indexes = [
-        index for index, highlight in enumerate(highlights) if snippet_in_text(highlight.get("snippet", ""), abstract_text)
-    ]
-    if len(abstract_indexes) <= 1:
-        return highlights
-
-    priority = {"goal": 0, "novelty": 1, "method": 2, "result": 3, "limitation": 4}
-    keep_index = min(abstract_indexes, key=lambda index: priority.get(str(highlights[index].get("label", "")), 99))
-    return [highlight for index, highlight in enumerate(highlights) if index not in abstract_indexes or index == keep_index]
 
 
 def analyze_paper(

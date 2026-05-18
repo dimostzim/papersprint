@@ -6,7 +6,6 @@ import pytest
 from app.ai import (
     MAX_ANALYSIS_HIGHLIGHTS,
     analyze_page_figures,
-    abstract_region_text,
     build_analysis_prompt,
     build_chat_prompt,
     build_selection_explanation_prompt,
@@ -14,7 +13,6 @@ from app.ai import (
     choose_vision_provider,
     format_analysis_text,
     format_guided_reading_text,
-    limit_abstract_highlights,
     normalize_analysis,
     normalize_highlight_snippet,
     parse_json_payload,
@@ -109,11 +107,11 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
     assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
     assert "Never end a snippet mid-word or mid-sentence" in prompt
-    assert "Choose highlights from the paper body text below" in prompt
-    assert "choose the body sentence" in prompt
+    assert "Abstract highlights are allowed" in prompt
+    assert "include it; otherwise prefer the more specific body sentence" in prompt
     assert "Do not cluster the set in the opening motivation" in prompt
     assert "[Page 2]" in prompt
-    assert "Paper body text:" in prompt
+    assert "Paper text:" in prompt
     assert "Return exactly" not in prompt
     assert "\x00" not in prompt
 
@@ -135,7 +133,7 @@ def test_format_analysis_text_adds_page_markers_without_mutating_text():
     assert "[Page 2]\nBody  text." in text
 
 
-def test_format_guided_reading_text_removes_front_matter_and_references():
+def test_format_guided_reading_text_keeps_abstract_and_removes_references():
     extracted = ExtractedPaper(
         "Useful paper",
         "",
@@ -158,78 +156,11 @@ def test_format_guided_reading_text_removes_front_matter_and_references():
 
     text = format_guided_reading_text(extracted)
 
-    assert "Abstract-only" not in text
-    assert "[Page 1]\n1 Introduction Body contribution starts here." in text
+    assert "Abstract-only motivation" in text
+    assert "[Page 1]\nTitle Authors Abstract Background Abstract-only motivation." in text
+    assert "1 Introduction Body contribution starts here." in text
     assert "[Page 2]\nThe method body gives implementation details." in text
     assert "References" not in text
-
-
-def test_limit_abstract_highlights_keeps_one_orientation_highlight():
-    extracted = ExtractedPaper(
-        "Useful paper",
-        "",
-        [
-            {
-                "page_number": 1,
-                "text": (
-                    "Title\nAbstract\n"
-                    "Existing tools fail on biomedical data. "
-                    "Here, we introduce a guided agent system. "
-                    "It reaches state of the art on many tasks.\n"
-                    "Introduction\nThe system validates each modeling step in the body."
-                ),
-            }
-        ],
-        [],
-    )
-    highlights = [
-        {"label": "limitation", "snippet": "Existing tools fail on biomedical data.", "reason": ""},
-        {"label": "goal", "snippet": "Here, we introduce a guided agent system.", "reason": ""},
-        {"label": "result", "snippet": "It reaches state of the art on many tasks.", "reason": ""},
-        {"label": "method", "snippet": "The system validates each modeling step in the body.", "reason": ""},
-    ]
-
-    filtered = limit_abstract_highlights(highlights, extracted)
-
-    assert [item["snippet"] for item in filtered] == [
-        "Here, we introduce a guided agent system.",
-        "The system validates each modeling step in the body.",
-    ]
-
-
-def test_abstract_region_text_stops_before_introduction():
-    extracted = ExtractedPaper(
-        "Useful paper",
-        "",
-        [{"page_number": 1, "text": "Abstract\nAbstract claim.\nIntroduction\nBody claim."}],
-        [],
-    )
-
-    assert abstract_region_text(extracted) == "Abstract claim."
-
-
-def test_abstract_region_text_keeps_structured_abstract_until_introduction():
-    extracted = ExtractedPaper(
-        "Useful paper",
-        "",
-        [
-            {
-                "page_number": 1,
-                "text": (
-                    "Abstract\n"
-                    "Background\nExisting tools fail. "
-                    "Methods\nWe test a new system. "
-                    "Results\nThe system improves results.\n"
-                    "1 Introduction\nBody claim."
-                ),
-            }
-        ],
-        [],
-    )
-
-    assert abstract_region_text(extracted) == (
-        "Background Existing tools fail. Methods We test a new system. Results The system improves results."
-    )
 
 
 def test_normalize_analysis_caps_highlights_to_hard_limit():
