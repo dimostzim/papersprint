@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import requests
 from dotenv import load_dotenv
 
 from .paper_processing import ExtractedPaper, ground_highlights, normalize_text, score_match
@@ -23,9 +24,53 @@ ANALYSIS_VERSION = 12
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
 REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
-MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"]
+CODEX_MODEL_OPTIONS = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+]
+OPENAI_MODEL_OPTIONS = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.2",
+    "gpt-5.2-pro",
+    "gpt-5.1",
+    "gpt-5-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "o3",
+    "o4-mini",
+]
+OPENROUTER_MODEL_OPTIONS = [
+    "openai/gpt-5.5",
+    "openai/gpt-5.4",
+    "openai/gpt-5.4-mini",
+    "openai/gpt-5.2",
+    "anthropic/claude-sonnet-4.5",
+    "google/gemini-3-pro",
+]
+MODEL_OPTIONS = list(dict.fromkeys([*CODEX_MODEL_OPTIONS, *OPENAI_MODEL_OPTIONS, *OPENROUTER_MODEL_OPTIONS]))
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+MODEL_EXCLUDE_TERMS = (
+    "audio",
+    "dall-e",
+    "embedding",
+    "image",
+    "moderation",
+    "realtime",
+    "search",
+    "sora",
+    "transcribe",
+    "tts",
+    "whisper",
+)
 
 
 @lru_cache(maxsize=None)
@@ -48,10 +93,13 @@ SELECTION_EXPLANATION_SYSTEM = load_prompt("selection_explanation_system.md")
 
 def provider_status() -> dict[str, Any]:
     has_openai_key = bool(os.getenv("OPENAI_API_KEY"))
+    has_openrouter_key = bool(os.getenv("OPENROUTER_API_KEY"))
     has_codex = bool(shutil.which("codex"))
-    default_provider = os.getenv("AI_PROVIDER", "auto")
-    if default_provider not in {"auto", "codex", "openai"}:
-        default_provider = "auto"
+    default_provider = os.getenv("AI_PROVIDER", "codex")
+    if default_provider not in {"auto", "codex", "openai", "openrouter"}:
+        default_provider = "codex"
+    codex_model_options = list_codex_models() if has_codex else CODEX_MODEL_OPTIONS
+    model_options = list(dict.fromkeys([*codex_model_options, *OPENAI_MODEL_OPTIONS, *OPENROUTER_MODEL_OPTIONS]))
     return {
         "default_provider": default_provider,
         "default_text_model": resolve_text_model(None),
@@ -65,13 +113,20 @@ def provider_status() -> dict[str, Any]:
             "CODEX_REASONING_EFFORT",
         ),
         "reasoning_efforts": sorted(REASONING_EFFORTS, key=["none", "low", "medium", "high", "xhigh"].index),
-        "model_options": MODEL_OPTIONS,
+        "model_options": model_options,
+        "provider_model_options": {
+            "auto": model_options,
+            "codex": codex_model_options,
+            "openai": OPENAI_MODEL_OPTIONS,
+            "openrouter": OPENROUTER_MODEL_OPTIONS,
+        },
         "openai_available": has_openai_key,
+        "openrouter_available": has_openrouter_key,
         "codex_available": has_codex,
         "providers": [
-            {"id": "auto", "label": "Auto"},
             {"id": "codex", "label": "Codex subscription"},
             {"id": "openai", "label": "OpenAI API key"},
+            {"id": "openrouter", "label": "OpenRouter API key"},
         ],
     }
 
@@ -86,11 +141,19 @@ def resolve_model(value: str | None, *env_names: str) -> str:
 
 
 def resolve_text_model(value: str | None) -> str:
-    return resolve_model(value, "OPENAI_MODEL", "CODEX_MODEL")
+    return resolve_model(value, "OPENAI_MODEL", "OPENROUTER_MODEL", "CODEX_MODEL")
 
 
 def resolve_vision_model(value: str | None) -> str:
-    return resolve_model(value, "OPENAI_VISION_MODEL", "CODEX_VISION_MODEL", "OPENAI_MODEL", "CODEX_MODEL")
+    return resolve_model(
+        value,
+        "OPENAI_VISION_MODEL",
+        "OPENROUTER_VISION_MODEL",
+        "CODEX_VISION_MODEL",
+        "OPENAI_MODEL",
+        "OPENROUTER_MODEL",
+        "CODEX_MODEL",
+    )
 
 
 def resolve_reasoning_effort(value: str | None, *env_names: str) -> str:
@@ -110,15 +173,132 @@ def openai_api_key(api_key: str | None = None) -> str:
     return (api_key or os.getenv("OPENAI_API_KEY") or "").strip()
 
 
+def openrouter_api_key(api_key: str | None = None) -> str:
+    return (api_key or os.getenv("OPENROUTER_API_KEY") or "").strip()
+
+
+def model_id_is_usable(model_id: str) -> bool:
+    normalized = model_id.lower()
+    if any(term in normalized for term in MODEL_EXCLUDE_TERMS):
+        return False
+    return normalized.startswith(("gpt-", "o", "chatgpt-", "computer-use", "openai/", "anthropic/", "google/", "x-ai/", "meta-llama/"))
+
+
+def sort_model_ids(model_ids: list[str]) -> list[str]:
+    preferred = [
+        "gpt-5.5",
+        "openai/gpt-5.5",
+        "gpt-5.4",
+        "openai/gpt-5.4",
+        "gpt-5.4-mini",
+        "openai/gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+        "openai/gpt-5.2",
+    ]
+    preferred_rank = {model: index for index, model in enumerate(preferred)}
+    return sorted(dict.fromkeys(model_ids), key=lambda model: (preferred_rank.get(model, len(preferred)), model))
+
+
+@lru_cache(maxsize=1)
+def list_codex_models() -> list[str]:
+    codex_path = shutil.which("codex")
+    if not codex_path:
+        return CODEX_MODEL_OPTIONS
+
+    try:
+        result = subprocess.run(
+            [codex_path, "debug", "models"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        payload = json.loads(result.stdout)
+    except Exception:
+        return CODEX_MODEL_OPTIONS
+
+    model_ids = []
+    for item in payload.get("models", []):
+        if not isinstance(item, dict) or item.get("visibility") != "list":
+            continue
+        model_id = str(item.get("slug", "")).strip()
+        if model_id:
+            model_ids.append(model_id)
+    return sort_model_ids(model_ids) or CODEX_MODEL_OPTIONS
+
+
+def list_openai_models(api_key: str | None = None) -> list[str]:
+    key = openai_api_key(api_key)
+    if not key:
+        return OPENAI_MODEL_OPTIONS
+
+    from openai import OpenAI
+
+    client = OpenAI(api_key=key)
+    models = client.models.list()
+    model_ids = [
+        model.id
+        for model in models.data
+        if model_id_is_usable(str(model.id))
+    ]
+    return sort_model_ids(model_ids) or OPENAI_MODEL_OPTIONS
+
+
+def list_openrouter_models(api_key: str | None = None) -> list[str]:
+    headers = {"Accept": "application/json"}
+    key = openrouter_api_key(api_key)
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    response = requests.get(f"{OPENROUTER_BASE_URL}/models", headers=headers, timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+    model_ids = []
+    for item in payload.get("data", []):
+        model_id = str(item.get("id", "")).strip()
+        architecture = item.get("architecture") if isinstance(item, dict) else {}
+        input_modalities = architecture.get("input_modalities", []) if isinstance(architecture, dict) else []
+        output_modalities = architecture.get("output_modalities", []) if isinstance(architecture, dict) else []
+        supports_text = not input_modalities or "text" in input_modalities
+        outputs_text = not output_modalities or "text" in output_modalities
+        if model_id and supports_text and outputs_text:
+            model_ids.append(model_id)
+    return sort_model_ids(model_ids) or OPENROUTER_MODEL_OPTIONS
+
+
+def provider_model_options(provider: str | None, api_key: str | None = None) -> list[str]:
+    selected = (provider or "auto").lower()
+    try:
+        if selected == "openai":
+            return list_openai_models(api_key)
+        if selected == "openrouter":
+            return list_openrouter_models(api_key)
+    except Exception:
+        pass
+    if selected == "codex":
+        return list_codex_models()
+    if selected == "openai":
+        return OPENAI_MODEL_OPTIONS
+    if selected == "openrouter":
+        return OPENROUTER_MODEL_OPTIONS
+    return MODEL_OPTIONS
+
+
 def choose_provider(requested: str | None, api_key: str | None = None) -> str:
     provider = (requested or os.getenv("AI_PROVIDER", "auto")).lower()
     if provider == "auto":
+        if str(api_key or "").strip().startswith("sk-or-"):
+            return "openrouter"
         if openai_api_key(api_key):
             return "openai"
+        if openrouter_api_key():
+            return "openrouter"
         if shutil.which("codex"):
             return "codex"
-        raise RuntimeError("No AI provider available. Log in to Codex CLI or set OPENAI_API_KEY.")
-    if provider in {"codex", "openai"}:
+        raise RuntimeError("No AI provider available. Log in to Codex CLI or set OPENAI_API_KEY or OPENROUTER_API_KEY.")
+    if provider in {"codex", "openai", "openrouter"}:
         return provider
     if provider == "local":
         raise RuntimeError("The local fallback provider has been removed.")
@@ -234,6 +414,105 @@ def run_openai_vision(
     return response.output_text
 
 
+def openrouter_headers(api_key: str | None = None) -> dict[str, str]:
+    key = openrouter_api_key(api_key)
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set.")
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://127.0.0.1:8788",
+        "X-Title": "PaperSprint",
+    }
+
+
+def openrouter_response_text(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise RuntimeError("OpenRouter response did not contain a completion.")
+    message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+    content = message.get("content", "")
+    if isinstance(content, list):
+        return "\n".join(str(item.get("text", "")) for item in content if isinstance(item, dict)).strip()
+    return str(content).strip()
+
+
+def openrouter_reasoning(reasoning_effort: str | None) -> dict[str, str] | None:
+    effort = resolve_reasoning_effort(reasoning_effort, "OPENROUTER_REASONING_EFFORT", "OPENAI_REASONING_EFFORT")
+    if effort == "none":
+        return None
+    return {"effort": effort}
+
+
+def run_openrouter(
+    prompt: str,
+    system_prompt: str,
+    expect_json: bool,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
+    body: dict[str, Any] = {
+        "model": model or os.getenv("OPENROUTER_MODEL") or "openai/gpt-5.5",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.2,
+    }
+    reasoning = openrouter_reasoning(reasoning_effort)
+    if reasoning:
+        body["reasoning"] = reasoning
+    if expect_json:
+        body["response_format"] = {"type": "json_object"}
+
+    response = requests.post(
+        f"{OPENROUTER_BASE_URL}/chat/completions",
+        headers=openrouter_headers(api_key),
+        json=body,
+        timeout=int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "180")),
+    )
+    response.raise_for_status()
+    return openrouter_response_text(response.json())
+
+
+def run_openrouter_vision(
+    prompt: str,
+    image_path: Path,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
+    image_data = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    body: dict[str, Any] = {
+        "model": model or os.getenv("OPENROUTER_VISION_MODEL") or os.getenv("OPENROUTER_MODEL") or "openai/gpt-5.5",
+        "messages": [
+            {"role": "system", "content": FIGURE_SYSTEM},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}},
+                ],
+            },
+        ],
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+    }
+    reasoning = openrouter_reasoning(reasoning_effort)
+    if reasoning:
+        body["reasoning"] = reasoning
+
+    response = requests.post(
+        f"{OPENROUTER_BASE_URL}/chat/completions",
+        headers=openrouter_headers(api_key),
+        json=body,
+        timeout=int(os.getenv("OPENROUTER_FIGURE_TIMEOUT_SECONDS", os.getenv("OPENROUTER_TIMEOUT_SECONDS", "180"))),
+    )
+    response.raise_for_status()
+    return openrouter_response_text(response.json())
+
+
 def run_codex_vision(
     prompt: str,
     image_path: Path,
@@ -262,6 +541,7 @@ def run_codex(
 
     prompt = sanitize_prompt_text(prompt)
     timeout = timeout_seconds or int(os.getenv("CODEX_TIMEOUT_SECONDS", "180"))
+    selected_model = resolve_text_model(model)
     with tempfile.TemporaryDirectory() as tmp_dir:
         output_path = Path(tmp_dir) / "last-message.txt"
         args = [
@@ -281,24 +561,30 @@ def run_codex(
             str(output_path),
             prompt,
         ]
-        selected_model = resolve_text_model(model)
         if selected_model:
             args[5:5] = ["-m", selected_model]
 
-        result = subprocess.run(
-            args,
-            cwd=Path(__file__).resolve().parent.parent,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                args,
+                cwd=Path(__file__).resolve().parent.parent,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"Codex timed out after {timeout} seconds with model {selected_model}. "
+                "Try lower reasoning effort or set CODEX_ANALYSIS_TIMEOUT_SECONDS higher."
+            ) from error
         if output_path.exists():
             output = output_path.read_text(encoding="utf-8").strip()
             if output:
                 return output
         if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or "Codex failed.").strip())
+            message = (result.stderr or result.stdout or "Codex failed.").strip()
+            raise RuntimeError(message[:1200])
         return result.stdout.strip()
 
 
@@ -310,14 +596,24 @@ def run_ai(
     api_key: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> tuple[str, str]:
     selected = choose_provider(provider, api_key)
     if selected == "openai":
         if not openai_api_key(api_key):
             raise RuntimeError("OPENAI_API_KEY is not set.")
         return run_openai(prompt, system_prompt, expect_json, api_key, model, reasoning_effort), "openai"
+    if selected == "openrouter":
+        if not openrouter_api_key(api_key):
+            raise RuntimeError("OPENROUTER_API_KEY is not set.")
+        return run_openrouter(prompt, system_prompt, expect_json, api_key, model, reasoning_effort), "openrouter"
     if selected == "codex":
-        return run_codex(f"{system_prompt}\n\n{prompt}", model=model, reasoning_effort=reasoning_effort), "codex"
+        return run_codex(
+            f"{system_prompt}\n\n{prompt}",
+            timeout_seconds=timeout_seconds,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        ), "codex"
     raise RuntimeError(f"Unknown AI provider: {provider}")
 
 
@@ -328,7 +624,9 @@ def choose_vision_provider(requested: str | None, api_key: str | None = None) ->
             return "codex"
         if openai_api_key(api_key):
             return "openai"
-        raise RuntimeError("No vision provider available. Log in to Codex CLI or set OPENAI_API_KEY.")
+        if openrouter_api_key():
+            return "openrouter"
+        raise RuntimeError("No vision provider available. Log in to Codex CLI or set OPENAI_API_KEY or OPENROUTER_API_KEY.")
     if provider == "codex":
         if not shutil.which("codex"):
             raise RuntimeError("Codex CLI is not installed or not on PATH.")
@@ -337,6 +635,10 @@ def choose_vision_provider(requested: str | None, api_key: str | None = None) ->
         if not openai_api_key(api_key):
             raise RuntimeError("OPENAI_API_KEY is not set.")
         return "openai"
+    if provider == "openrouter":
+        if not openrouter_api_key(api_key):
+            raise RuntimeError("OPENROUTER_API_KEY is not set.")
+        return "openrouter"
     if provider == "local":
         raise RuntimeError("The local fallback provider has been removed.")
     raise RuntimeError(f"Unknown AI provider: {provider}")
@@ -445,6 +747,7 @@ def analyze_paper(
         api_key,
         model,
         reasoning_effort,
+        int(os.getenv("CODEX_ANALYSIS_TIMEOUT_SECONDS", os.getenv("CODEX_TIMEOUT_SECONDS", "600"))),
     )
     analysis = normalize_analysis(parse_json_payload(output), extracted)
 
@@ -473,6 +776,8 @@ def analyze_page_figures(
         output = run_openai_vision(prompt, image_path, api_key, model, reasoning_effort)
     elif selected_provider == "codex":
         output = run_codex_vision(prompt, image_path, model, reasoning_effort)
+    elif selected_provider == "openrouter":
+        output = run_openrouter_vision(prompt, image_path, api_key, model, reasoning_effort)
     else:
         raise RuntimeError(f"Unknown vision provider: {provider}")
     payload = parse_json_payload(output)

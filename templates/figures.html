@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Figures - PaperSprint</title>
-    <link rel="stylesheet" href="/static/styles.css?v=54" />
+    <link rel="stylesheet" href="/static/styles.css?v=73" />
   </head>
   <body class="figures-body" data-paper-id="{{ paper_id }}">
     <header class="topbar">
@@ -17,9 +17,9 @@
           </div>
         </div>
         <select id="provider-select" aria-label="AI provider">
-          <option value="auto">Auto</option>
           <option value="codex">Codex subscription</option>
           <option value="openai">OpenAI API key</option>
+          <option value="openrouter">OpenRouter API key</option>
         </select>
         <input
           id="api-key-input"
@@ -27,8 +27,8 @@
           type="password"
           autocomplete="off"
           spellcheck="false"
-          placeholder="OpenAI API key"
-          aria-label="OpenAI API key"
+          placeholder="Provider API key"
+          aria-label="Provider API key"
         />
       </div>
 
@@ -36,12 +36,20 @@
         <label class="model-group">
           <span>Text</span>
           <input id="text-model-input" class="model-input" type="text" list="model-options" aria-label="Text model" spellcheck="false" />
-          <select id="text-effort-select" class="effort-select" aria-label="Text reasoning effort"></select>
+          <div class="effort-picker">
+            <input id="text-effort-select" type="hidden" value="high" />
+            <button class="effort-select" type="button" data-effort-button aria-haspopup="listbox" aria-expanded="false">high</button>
+            <div class="effort-menu hidden" role="listbox" aria-label="Text reasoning effort"></div>
+          </div>
         </label>
         <label class="model-group">
           <span>Vision</span>
           <input id="vision-model-input" class="model-input" type="text" list="model-options" aria-label="Vision model" spellcheck="false" />
-          <select id="vision-effort-select" class="effort-select" aria-label="Vision reasoning effort"></select>
+          <div class="effort-picker">
+            <input id="vision-effort-select" type="hidden" value="high" />
+            <button class="effort-select" type="button" data-effort-button aria-haspopup="listbox" aria-expanded="false">high</button>
+            <div class="effort-menu hidden" role="listbox" aria-label="Vision reasoning effort"></div>
+          </div>
         </label>
         <datalist id="model-options"></datalist>
         <a class="button-link" href="/">Reader</a>
@@ -86,6 +94,6 @@
 
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/figures.js?v=20"></script>
+    <script type="module" src="/static/figures.js?v=23"></script>
   </body>
 </html>

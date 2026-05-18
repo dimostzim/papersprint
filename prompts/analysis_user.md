@@ -36,7 +36,7 @@ Highlight requirements:
 - Code availability should use only paper text. Say when release or usability is unclear.
 - Reviewer questions should be specific requests a reviewer would ask the authors to clarify, test, release, or bound.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
-- Treat all highlight labels as equal priority. Do not let problem, solution, method, or result highlights crowd out benchmarking, hyperparams, ablation, tradeoff, limitation, or failure highlights when those facets appear in the paper.
+- Treat all highlight labels as equal priority, but use only labels that have explicit useful evidence in this paper. Do not add computational-paper-specific labels such as benchmarking, hyperparams, ablation, or failure when the paper does not actually contain those details.
 - Add a highlight only if it changes the reader's understanding of the problem, solution, novelty, method, evidence, tradeoff, failure mode, or claim limitation.
 - Abstract highlights are allowed when they provide useful orientation, especially for problem, solution, novelty, and main result.
 - Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, reproducibility details, and limits when they exist.
@@ -55,7 +55,7 @@ Highlight requirements:
 - Use the limitation label only for limitations of this paper's own data, method, evaluation, assumptions, claims, or generalizability. Do not label weaknesses of prior work or background motivation as limitation; label those as problem when they define the problem.
 - Use the failure label for reported failure modes, negative cases, error analysis, or situations where the proposed approach breaks down.
 - Prefer a balanced guided skim across relevant labels when those facets are present, but do not force every label or invent missing facets.
-- Before finalizing, check whether the paper contains explicit benchmarking, hyperparams, ablation, failure, or tradeoff evidence. If one exists and is absent, replace a redundant generic problem/method/result highlight with the best exact sentence for that facet.
+- Before finalizing, check whether the paper contains explicit benchmarking, hyperparams, ablation, failure, or tradeoff evidence. If one exists, is useful for understanding this paper, and is absent, replace a redundant generic problem/method/result highlight with the best exact sentence for that facet. If that evidence does not exist, leave the label unused.
 - Stop when the next highlight repeats an idea already covered.
 - Highlights must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
 - Avoid adjacent highlights unless they serve different labels.

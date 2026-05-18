@@ -102,22 +102,26 @@ function selectedTextModel() {
 }
 
 function selectedProvider() {
-  return els.providerSelect?.value || "auto";
+  return els.providerSelect?.value || "codex";
 }
 
 function requestApiKey() {
-  return selectedProvider() === "openai" ? els.apiKeyInput?.value.trim() || "" : "";
+  return ["openai", "openrouter"].includes(selectedProvider()) ? els.apiKeyInput?.value.trim() || "" : "";
 }
 
 function syncApiKeyInput() {
-  els.apiKeyInput?.classList.toggle("hidden", selectedProvider() !== "openai");
+  const needsKey = ["openai", "openrouter"].includes(selectedProvider());
+  const label = selectedProvider() === "openrouter" ? "OpenRouter API key" : "OpenAI API key";
+  els.apiKeyInput?.classList.toggle("hidden", !needsKey);
+  els.apiKeyInput?.setAttribute("placeholder", label);
+  els.apiKeyInput?.setAttribute("aria-label", label);
 }
 
 function requireOpenAiKey() {
-  if (selectedProvider() !== "openai" || requestApiKey()) {
+  if (!["openai", "openrouter"].includes(selectedProvider()) || requestApiKey()) {
     return true;
   }
-  showToast("Enter an OpenAI API key");
+  showToast(`Enter an ${selectedProvider() === "openrouter" ? "OpenRouter" : "OpenAI"} API key`);
   els.apiKeyInput?.focus();
   return false;
 }
@@ -150,13 +154,64 @@ function populateEffortSelect(select, efforts, selected, prefix) {
   if (!select) {
     return;
   }
+  const options = Array.from(new Set((efforts || []).map((effort) => String(effort || "").trim()).filter(Boolean)));
+  const selectedEffort = options.includes(selected) ? selected : options[0] || "high";
+  select.value = selectedEffort;
+  const picker = select.closest(".effort-picker");
+  if (!picker) {
+    return;
+  }
+  const button = picker.querySelector("[data-effort-button]");
+  const menu = picker.querySelector(".effort-menu");
+  if (button) {
+    button.textContent = selectedEffort;
+    button.setAttribute("aria-label", `${prefix} reasoning effort: ${selectedEffort}`);
+  }
   setHtml(
-    select,
-    efforts.map((effort) => {
-      const isSelected = effort === selected ? " selected" : "";
-      return `<option value="${escapeHtml(effort)}"${isSelected}>${escapeHtml(prefix)}: ${escapeHtml(effort)}</option>`;
+    menu,
+    options.map((effort) => {
+      const isSelected = effort === selectedEffort ? "true" : "false";
+      return `<button type="button" role="option" data-effort-option="${escapeHtml(effort)}" aria-selected="${isSelected}">${escapeHtml(effort)}</button>`;
     }).join(""),
   );
+}
+
+function closeEffortPickers(exceptPicker = null) {
+  document.querySelectorAll(".effort-picker").forEach((picker) => {
+    if (picker === exceptPicker) {
+      return;
+    }
+    picker.querySelector(".effort-menu")?.classList.add("hidden");
+    picker.querySelector("[data-effort-button]")?.setAttribute("aria-expanded", "false");
+  });
+}
+
+function toggleEffortPicker(button) {
+  const picker = button.closest(".effort-picker");
+  if (!picker) {
+    return;
+  }
+  const menu = picker.querySelector(".effort-menu");
+  const isOpen = !menu?.classList.contains("hidden");
+  closeEffortPickers(picker);
+  menu?.classList.toggle("hidden", isOpen);
+  button.setAttribute("aria-expanded", String(!isOpen));
+}
+
+function selectEffortOption(option) {
+  const picker = option.closest(".effort-picker");
+  const input = picker?.querySelector("input[type='hidden']");
+  const button = picker?.querySelector("[data-effort-button]");
+  if (!input || !button) {
+    return;
+  }
+  input.value = option.dataset.effortOption || "high";
+  button.textContent = input.value;
+  picker.querySelectorAll("[data-effort-option]").forEach((node) => {
+    node.setAttribute("aria-selected", String(node === option));
+  });
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  closeEffortPickers();
 }
 
 function populateModelOptions(settings) {
@@ -607,6 +662,28 @@ els.chatForm?.addEventListener("submit", (event) => {
 els.chatInput?.addEventListener("input", resizeChatInput);
 els.chatInput?.addEventListener("keydown", submitChatOnEnter);
 els.providerSelect?.addEventListener("change", syncApiKeyInput);
+document.addEventListener("click", (event) => {
+  const effortOption = event.target.closest?.("[data-effort-option]");
+  if (effortOption) {
+    selectEffortOption(effortOption);
+    return;
+  }
+
+  const effortButton = event.target.closest?.("[data-effort-button]");
+  if (effortButton) {
+    toggleEffortPicker(effortButton);
+    return;
+  }
+
+  if (!event.target.closest?.(".effort-picker")) {
+    closeEffortPickers();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeEffortPickers();
+  }
+});
 [
   els.textModelInput,
   els.textEffortSelect,

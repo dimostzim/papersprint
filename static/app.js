@@ -62,11 +62,13 @@ const PDF_ZOOM_MIN = 0.6;
 const PDF_ZOOM_MAX = 2.4;
 const PDF_ZOOM_STEP = 0.1;
 const MODEL_SETTINGS_KEY = "papersprint.modelSettings";
+const CUSTOM_MODEL_VALUE = "__custom__";
 
 const state = {
   papers: [],
   selectedPaper: null,
   settings: null,
+  providerModelOptions: {},
   chatMessages: [],
   renderToken: 0,
   analysisPoll: null,
@@ -98,7 +100,6 @@ const els = {
   textEffortSelect: document.getElementById("text-effort-select"),
   visionModelInput: document.getElementById("vision-model-input"),
   visionEffortSelect: document.getElementById("vision-effort-select"),
-  modelOptions: document.getElementById("model-options"),
   apiKeyInput: document.getElementById("api-key-input"),
   analyzeButton: document.getElementById("analyze-button"),
   providerStatus: document.getElementById("provider-status"),
@@ -480,53 +481,143 @@ async function requestJson(url, options = {}) {
   return payload;
 }
 
-function storedModelSettings() {
+function storedModelSettings(provider = selectedProvider()) {
   try {
-    return JSON.parse(window.localStorage.getItem(MODEL_SETTINGS_KEY) || "{}");
+    const stored = JSON.parse(window.localStorage.getItem(MODEL_SETTINGS_KEY) || "{}");
+    return stored.providers?.[provider] || (provider === "codex" ? stored : {});
   } catch {
     return {};
   }
 }
 
 function saveModelSettings() {
+  let stored = {};
+  try {
+    stored = JSON.parse(window.localStorage.getItem(MODEL_SETTINGS_KEY) || "{}");
+  } catch {
+    stored = {};
+  }
   const settings = {
     textModel: selectedTextModel(),
     textEffort: selectedTextEffort(),
     visionModel: selectedVisionModel(),
     visionEffort: selectedVisionEffort(),
   };
-  window.localStorage.setItem(MODEL_SETTINGS_KEY, JSON.stringify(settings));
+  const providers = {
+    ...(stored.providers || {}),
+    [selectedProvider()]: settings,
+  };
+  window.localStorage.setItem(MODEL_SETTINGS_KEY, JSON.stringify({ ...settings, providers }));
 }
 
-function populateEffortSelect(select, efforts, selected, prefix) {
+function populateEffortSelect(select, efforts, selected) {
   if (!select) {
     return;
   }
+  const options = Array.from(new Set((efforts || []).map((effort) => String(effort || "").trim()).filter(Boolean)));
+  const selectedEffort = options.includes(selected) ? selected : options[0] || "high";
+  select.value = selectedEffort;
+  const picker = select.closest(".effort-picker");
+  if (!picker) {
+    return;
+  }
+  const button = picker.querySelector("[data-effort-button]");
+  const menu = picker.querySelector(".effort-menu");
+  if (button) {
+    button.textContent = selectedEffort;
+  }
   setHtml(
-    select,
-    efforts.map((effort) => {
-      const isSelected = effort === selected ? " selected" : "";
-      return `<option value="${escapeHtml(effort)}"${isSelected}>${escapeHtml(prefix)}: ${escapeHtml(effort)}</option>`;
+    menu,
+    options.map((effort) => {
+      const isSelected = effort === selectedEffort ? "true" : "false";
+      return `<button type="button" role="option" data-effort-option="${escapeHtml(effort)}" aria-selected="${isSelected}">${escapeHtml(effort)}</button>`;
     }).join(""),
   );
 }
 
-function populateModelOptions(settings) {
-  if (!els.modelOptions) {
+function closeEffortPickers(exceptPicker = null) {
+  document.querySelectorAll(".effort-picker").forEach((picker) => {
+    if (picker === exceptPicker) {
+      return;
+    }
+    picker.querySelector(".effort-menu")?.classList.add("hidden");
+    picker.querySelector("[data-effort-button]")?.setAttribute("aria-expanded", "false");
+  });
+}
+
+function toggleEffortPicker(button) {
+  const picker = button.closest(".effort-picker");
+  if (!picker) {
     return;
   }
+  const menu = picker.querySelector(".effort-menu");
+  const isOpen = !menu?.classList.contains("hidden");
+  closeEffortPickers(picker);
+  menu?.classList.toggle("hidden", isOpen);
+  button.setAttribute("aria-expanded", String(!isOpen));
+}
 
+function selectEffortOption(option) {
+  const picker = option.closest(".effort-picker");
+  const input = picker?.querySelector("input[type='hidden']");
+  const button = picker?.querySelector("[data-effort-button]");
+  if (!input || !button) {
+    return;
+  }
+  input.value = option.dataset.effortOption || "high";
+  button.textContent = input.value;
+  picker.querySelectorAll("[data-effort-option]").forEach((node) => {
+    node.setAttribute("aria-selected", String(node === option));
+  });
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  closeEffortPickers();
+}
+
+function providerRequiresApiKey(provider = selectedProvider()) {
+  return provider === "openai" || provider === "openrouter";
+}
+
+function providerApiKeyLabel(provider = selectedProvider()) {
+  return provider === "openrouter" ? "OpenRouter API key" : "OpenAI API key";
+}
+
+function currentProviderModels(settings) {
+  const provider = selectedProvider();
+  return state.providerModelOptions[provider]
+    || settings.provider_model_options?.[provider]
+    || settings.model_options
+    || [];
+}
+
+function availableModels(settings, ...extraModels) {
   const models = [
+    ...currentProviderModels(settings),
+    ...extraModels,
     settings.default_text_model,
     settings.default_vision_model,
-    ...(settings.model_options || []),
   ]
     .map((model) => String(model || "").trim())
     .filter(Boolean);
-  const uniqueModels = Array.from(new Set(models));
+  return Array.from(new Set(models));
+}
+
+function populateModelSelect(select, models, selected) {
+  if (!select) {
+    return;
+  }
+  const selectedModel = String(selected || "").trim();
+  const options = models.includes(selectedModel) || !selectedModel
+    ? models
+    : [selectedModel, ...models];
   setHtml(
-    els.modelOptions,
-    uniqueModels.map((model) => `<option value="${escapeHtml(model)}"></option>`).join(""),
+    select,
+    [
+      ...options.map((model) => {
+        const isSelected = model === selectedModel ? " selected" : "";
+        return `<option value="${escapeHtml(model)}"${isSelected}>${escapeHtml(model)}</option>`;
+      }),
+      `<option value="${CUSTOM_MODEL_VALUE}">Custom...</option>`,
+    ].join(""),
   );
 }
 
@@ -537,19 +628,14 @@ function setModelOptions(settings) {
     : ["none", "low", "medium", "high", "xhigh"];
   const textEffort = stored.textEffort || settings.default_reasoning_effort || "high";
   const visionEffort = stored.visionEffort || settings.default_vision_reasoning_effort || textEffort;
-  if (els.textModelInput) {
-    els.textModelInput.value = stored.textModel || settings.default_text_model || "gpt-5.5";
-    els.textModelInput.placeholder = "Text model";
-    els.textModelInput.title = "Text model";
-  }
-  if (els.visionModelInput) {
-    els.visionModelInput.value = stored.visionModel || settings.default_vision_model || selectedTextModel();
-    els.visionModelInput.placeholder = "Vision model";
-    els.visionModelInput.title = "Vision model";
-  }
-  populateModelOptions(settings);
-  populateEffortSelect(els.textEffortSelect, efforts, textEffort, "Text");
-  populateEffortSelect(els.visionEffortSelect, efforts, visionEffort, "Vision");
+  const providerModels = availableModels(settings);
+  const textModel = stored.textModel || providerModels[0] || settings.default_text_model || "gpt-5.5";
+  const visionModel = stored.visionModel || providerModels[0] || settings.default_vision_model || textModel;
+  const models = availableModels(settings, textModel, visionModel);
+  populateModelSelect(els.textModelInput, models, textModel);
+  populateModelSelect(els.visionModelInput, models, visionModel);
+  populateEffortSelect(els.textEffortSelect, efforts, textEffort);
+  populateEffortSelect(els.visionEffortSelect, efforts, visionEffort);
 }
 
 function setProviderOptions(settings) {
@@ -559,9 +645,10 @@ function setProviderOptions(settings) {
   setModelOptions(settings);
   const parts = [];
   parts.push(settings.codex_available ? "Codex ready" : "Codex unavailable");
-  parts.push(settings.openai_available ? "OpenAI key set" : "No API key");
+  parts.push(settings.openai_available ? "OpenAI key set" : "No OpenAI key");
+  parts.push(settings.openrouter_available ? "OpenRouter key set" : "No OpenRouter key");
   if (els.providerStatus) {
-    els.providerStatus.textContent = parts.join(" · ");
+    els.providerStatus.textContent = parts.join("\n");
   }
   syncApiKeyInput();
 }
@@ -570,22 +657,25 @@ async function loadSettings() {
   const settings = await requestJson("/api/settings");
   state.settings = settings;
   setProviderOptions(settings);
+  refreshProviderModels().catch(() => {});
 }
 
 function selectedProvider() {
-  return els.providerSelect?.value || "auto";
+  return els.providerSelect?.value || "codex";
 }
 
 function requestApiKey() {
-  return selectedProvider() === "openai" ? els.apiKeyInput?.value.trim() || "" : "";
+  return providerRequiresApiKey() ? els.apiKeyInput?.value.trim() || "" : "";
 }
 
 function selectedTextModel() {
-  return els.textModelInput?.value.trim() || state.settings?.default_text_model || "gpt-5.5";
+  const value = els.textModelInput?.value.trim();
+  return value && value !== CUSTOM_MODEL_VALUE ? value : state.settings?.default_text_model || "gpt-5.5";
 }
 
 function selectedVisionModel() {
-  return els.visionModelInput?.value.trim() || state.settings?.default_vision_model || selectedTextModel();
+  const value = els.visionModelInput?.value.trim();
+  return value && value !== CUSTOM_MODEL_VALUE ? value : state.settings?.default_vision_model || selectedTextModel();
 }
 
 function selectedTextEffort() {
@@ -594,6 +684,31 @@ function selectedTextEffort() {
 
 function selectedVisionEffort() {
   return els.visionEffortSelect?.value || state.settings?.default_vision_reasoning_effort || selectedTextEffort();
+}
+
+function setCustomModel(select, model) {
+  if (!select || !model) {
+    return;
+  }
+  if (![...select.options].some((option) => option.value === model)) {
+    const option = new Option(model, model);
+    select.insertBefore(option, select.querySelector(`option[value="${CUSTOM_MODEL_VALUE}"]`));
+  }
+  select.value = model;
+}
+
+function handleModelSelectChange(select, fallbackModel) {
+  if (!select || select.value !== CUSTOM_MODEL_VALUE) {
+    return;
+  }
+
+  const customModel = window.prompt("Enter model name", fallbackModel || "gpt-5.5");
+  const cleanModel = String(customModel || "").replace(/\s+/g, " ").trim();
+  if (!cleanModel) {
+    select.value = fallbackModel || state.settings?.default_text_model || "gpt-5.5";
+    return;
+  }
+  setCustomModel(select, cleanModel);
 }
 
 function textModelRequestOptions() {
@@ -614,16 +729,36 @@ function syncApiKeyInput() {
   if (!els.apiKeyInput) {
     return;
   }
-  els.apiKeyInput.classList.toggle("hidden", selectedProvider() !== "openai");
+  const needsKey = providerRequiresApiKey();
+  els.apiKeyInput.classList.toggle("hidden", !needsKey);
+  els.apiKeyInput.placeholder = providerApiKeyLabel();
+  els.apiKeyInput.setAttribute("aria-label", providerApiKeyLabel());
 }
 
 function requireOpenAiKey() {
-  if (selectedProvider() !== "openai" || requestApiKey()) {
+  if (!providerRequiresApiKey() || requestApiKey()) {
     return true;
   }
-  showToast("Enter an OpenAI API key");
+  showToast(`Enter an ${providerApiKeyLabel()}`);
   els.apiKeyInput?.focus();
   return false;
+}
+
+async function refreshProviderModels() {
+  if (!state.settings) {
+    return;
+  }
+  const provider = selectedProvider();
+  const payload = await requestJson("/api/models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider,
+      api_key: requestApiKey() || null,
+    }),
+  });
+  state.providerModelOptions[provider] = payload.model_options || [];
+  setModelOptions(state.settings);
 }
 
 async function loadPapers(selectFirst = true) {
@@ -849,8 +984,13 @@ function clearSelectedPaper() {
 function syncPaperActions() {
   const isAnalyzing = state.selectedPaper?.analysis_status === "analyzing";
   const isBusy = isAnalyzing || state.figureAnalysisRunning;
+  const buttonLabel = state.figureAnalysisRunning
+    ? "Analyzing figures"
+    : isAnalyzing
+      ? "Analyzing text"
+      : "Analyze";
   syncPdfZoomControls();
-  setLoadingButton(els.analyzeButton, Boolean(isBusy), isBusy ? "Analyzing" : "Analyze");
+  setLoadingButton(els.analyzeButton, Boolean(isBusy), buttonLabel);
   if (els.analyzeButton) {
     els.analyzeButton.disabled = Boolean(isBusy);
   }
@@ -945,7 +1085,7 @@ function renderHighlightFilters(highlights) {
   }
   const facets = [
     HIGHLIGHT_FACETS[0],
-    ...highlightCategoryOptions(highlights),
+    ...highlightCategoryOptions(highlights).filter((facet) => counts.has(facet.id)),
   ];
 
   setHtml(
@@ -1586,7 +1726,8 @@ function figuresByPage(figures) {
   return map;
 }
 
-async function renderPdf(paper) {
+async function renderPdf(paper, options = {}) {
+  const shouldResetViewport = options.resetViewport !== false;
   const token = ++state.renderToken;
   state.pageTexts = new Map();
   state.pageWords = new Map();
@@ -1598,6 +1739,9 @@ async function renderPdf(paper) {
   els.readerEmpty?.classList.add("hidden");
   els.pdfViewer?.classList.remove("hidden");
   setHtml(els.pdfViewer, `<div class="loading">Rendering PDF</div>`);
+  if (shouldResetViewport) {
+    resetPaperViewport();
+  }
 
   const pdfDoc = await pdfjsLib.getDocument(`/api/papers/${paper.id}/file`).promise;
   const pageHighlights = highlightsByPage(filteredHighlights(paper.highlights || []));
@@ -1675,6 +1819,9 @@ async function renderPdf(paper) {
   if (state.selectedPaper?.id === paper.id) {
     renderPaperDetails(state.selectedPaper);
   }
+  if (shouldResetViewport) {
+    resetPaperViewport();
+  }
 }
 
 async function renderTextLayer(page, textLayer, viewport, pageNumber) {
@@ -1697,7 +1844,7 @@ async function renderTextLayer(page, textLayer, viewport, pageNumber) {
 
 async function renderPdfPreservingScroll(paper) {
   const anchor = pdfScrollAnchor();
-  await renderPdf(paper);
+  await renderPdf(paper, { resetViewport: false });
   restorePdfScrollAnchor(anchor);
 }
 
@@ -1895,7 +2042,7 @@ async function startSelectedPaperAnalysis(event) {
   if (paper.analysis_status === "complete") {
     await renderPdfPreservingScroll(paper);
     hideToast();
-    await analyzeFiguresInReader(false);
+    startFigureAnalysisAfterText(paper.id);
   } else {
     hideToast();
     showToast("Analysis started. Keep reading while it runs.");
@@ -1929,7 +2076,7 @@ function pollPaperAnalysis(paperId) {
         await renderPdfPreservingScroll(paper);
         renderPaperDetails(paper);
         hideToast();
-        await analyzeFiguresInReader(false);
+        startFigureAnalysisAfterText(paperId);
       } else if (paper.analysis_status === "error") {
         hideToast();
         showToast(paper.analysis_error || "Analysis failed");
@@ -1938,6 +2085,17 @@ function pollPaperAnalysis(paperId) {
       showToast(error.message || String(error));
     }
   }, 2500);
+}
+
+function startFigureAnalysisAfterText(paperId) {
+  if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
+    return;
+  }
+  showToast("Text analysis ready. Analyzing figures and tables.", true);
+  analyzeFiguresInReader(false).catch((error) => {
+    hideToast();
+    showToast(error.message || String(error));
+  });
 }
 
 function renderChat() {
@@ -2912,11 +3070,46 @@ els.pdfInput?.addEventListener("change", () => {
   });
 });
 
-els.providerSelect?.addEventListener("change", syncApiKeyInput);
+els.providerSelect?.addEventListener("change", () => {
+  syncApiKeyInput();
+  setModelOptions(state.settings || {});
+  refreshProviderModels().catch((error) => showToast(error.message || String(error)));
+});
+els.apiKeyInput?.addEventListener("change", () => {
+  refreshProviderModels().catch((error) => showToast(error.message || String(error)));
+});
+els.textModelInput?.addEventListener("change", () => {
+  handleModelSelectChange(els.textModelInput, selectedTextModel());
+  saveModelSettings();
+});
+els.visionModelInput?.addEventListener("change", () => {
+  handleModelSelectChange(els.visionModelInput, selectedVisionModel());
+  saveModelSettings();
+});
+document.addEventListener("click", (event) => {
+  const effortOption = event.target.closest?.("[data-effort-option]");
+  if (effortOption) {
+    selectEffortOption(effortOption);
+    return;
+  }
+
+  const effortButton = event.target.closest?.("[data-effort-button]");
+  if (effortButton) {
+    toggleEffortPicker(effortButton);
+    return;
+  }
+
+  if (!event.target.closest?.(".effort-picker")) {
+    closeEffortPickers();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeEffortPickers();
+  }
+});
 [
-  els.textModelInput,
   els.textEffortSelect,
-  els.visionModelInput,
   els.visionEffortSelect,
 ].forEach((control) => {
   control?.addEventListener("change", saveModelSettings);

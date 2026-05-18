@@ -1,4 +1,7 @@
+import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 import pytest
@@ -18,9 +21,12 @@ from app.ai import (
     normalize_analysis,
     normalize_highlight_snippet,
     parse_json_payload,
+    list_codex_models,
+    provider_model_options,
     provider_status,
     resolve_reasoning_effort,
     resolve_text_model,
+    run_codex,
     sanitize_prompt_text,
     select_relevant_excerpts,
 )
@@ -345,6 +351,7 @@ def test_choose_provider_rejects_removed_local_provider():
 
 def test_choose_provider_requires_ai_provider_for_auto(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("PATH", "")
 
     with pytest.raises(RuntimeError, match="No AI provider available"):
@@ -353,9 +360,17 @@ def test_choose_provider_requires_ai_provider_for_auto(monkeypatch):
 
 def test_choose_provider_uses_request_api_key_for_auto(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("PATH", "")
 
     assert choose_provider("auto", "sk-test") == "openai"
+    assert choose_provider("auto", "sk-or-v1-test") == "openrouter"
+
+
+def test_choose_provider_accepts_openrouter(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    assert choose_provider("openrouter") == "openrouter"
 
 
 def test_provider_status_exposes_model_defaults(monkeypatch):
@@ -363,13 +378,72 @@ def test_provider_status_exposes_model_defaults(monkeypatch):
     monkeypatch.delenv("CODEX_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("CODEX_REASONING_EFFORT", raising=False)
+    monkeypatch.setattr("app.ai.list_codex_models", lambda: ["gpt-5.5", "gpt-5.4"])
 
     status = provider_status()
 
+    assert status["default_provider"] == "codex"
     assert status["default_text_model"] == DEFAULT_MODEL
     assert status["default_vision_model"] == DEFAULT_MODEL
     assert status["default_reasoning_effort"] == "high"
     assert status["reasoning_efforts"] == ["none", "low", "medium", "high", "xhigh"]
+    assert "auto" not in {provider["id"] for provider in status["providers"]}
+    assert "openrouter" in {provider["id"] for provider in status["providers"]}
+    assert status["provider_model_options"]["codex"]
+    assert status["provider_model_options"]["openrouter"]
+
+
+def test_list_codex_models_uses_visible_cli_catalog(monkeypatch):
+    payload = {
+        "models": [
+            {"slug": "codex-auto-review", "visibility": "hide"},
+            {"slug": "gpt-5.2", "visibility": "list"},
+            {"slug": "gpt-5.3-codex-spark", "visibility": "list"},
+            {"slug": "gpt-5.5", "visibility": "list"},
+        ]
+    }
+
+    list_codex_models.cache_clear()
+    monkeypatch.setattr("app.ai.shutil.which", lambda command: "/usr/local/bin/codex" if command == "codex" else None)
+    monkeypatch.setattr(
+        "app.ai.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps(payload)),
+    )
+
+    try:
+        assert list_codex_models() == ["gpt-5.5", "gpt-5.3-codex-spark", "gpt-5.2"]
+    finally:
+        list_codex_models.cache_clear()
+
+
+def test_provider_model_options_uses_codex_catalog(monkeypatch):
+    monkeypatch.setattr("app.ai.list_codex_models", lambda: ["gpt-5.5", "gpt-5.3-codex-spark"])
+
+    assert provider_model_options("codex") == ["gpt-5.5", "gpt-5.3-codex-spark"]
+
+
+def test_run_codex_timeout_hides_full_prompt(monkeypatch):
+    def timeout(*_args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["codex", "very long prompt"], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr("app.ai.shutil.which", lambda command: "/usr/local/bin/codex" if command == "codex" else None)
+    monkeypatch.setattr("app.ai.subprocess.run", timeout)
+
+    with pytest.raises(RuntimeError) as error:
+        run_codex("very long prompt", timeout_seconds=7, model="gpt-5.4", reasoning_effort="low")
+
+    message = str(error.value)
+    assert "Codex timed out after 7 seconds with model gpt-5.4" in message
+    assert "very long prompt" not in message
+
+
+def test_provider_model_options_uses_fallback_for_openrouter(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("app.ai.list_openrouter_models", fail)
+
+    assert provider_model_options("openrouter")[0].startswith("openai/")
 
 
 def test_model_and_effort_resolution_prefers_request_then_env(monkeypatch):
@@ -385,6 +459,7 @@ def test_model_and_effort_resolution_prefers_request_then_env(monkeypatch):
 
 def test_choose_vision_provider_prefers_codex_for_auto(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("AI_PROVIDER", "openai")
     monkeypatch.setattr("app.ai.shutil.which", lambda command: "/usr/local/bin/codex" if command == "codex" else None)
 
@@ -393,6 +468,7 @@ def test_choose_vision_provider_prefers_codex_for_auto(monkeypatch):
 
 def test_choose_vision_provider_requires_available_provider(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr("app.ai.shutil.which", lambda command: None)
 
     with pytest.raises(RuntimeError, match="No vision provider available"):

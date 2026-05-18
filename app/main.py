@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
-from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_status
+from .ai import ANALYSIS_VERSION, analyze_paper, answer_chat, answer_selection_explanation, provider_model_options, provider_status
 from .citations import CITATION_VERSION, extract_citations, ground_citation_rects
 from .figures import analyze_figures, ensure_figure_images, figure_directory
 from .paper_processing import extract_pdf, file_digest, find_exact_rects, public_page_sizes, slugify, sort_highlights
@@ -87,6 +87,11 @@ class SelectionExplainRequest(BaseModel):
     api_key: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+
+
+class ModelsRequest(BaseModel):
+    provider: str | None = "auto"
+    api_key: str | None = None
 
 
 class HighlightsUpdateRequest(BaseModel):
@@ -531,6 +536,15 @@ def settings():
     return provider_status()
 
 
+@app.post("/api/models")
+async def list_provider_models(request: ModelsRequest):
+    provider = request.provider or "auto"
+    if provider not in {"auto", "codex", "openai", "openrouter"}:
+        raise HTTPException(status_code=400, detail="Unknown AI provider.")
+    models = await asyncio.to_thread(provider_model_options, provider, request.api_key)
+    return {"provider": provider, "model_options": models}
+
+
 @app.get("/api/papers")
 def list_papers():
     return {"papers": [public_paper(paper) for paper in reversed(PAPERS.values())]}
@@ -584,7 +598,7 @@ async def upload_paper(file: UploadFile = File(...)):
 async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
     paper = read_paper(paper_id)
     provider = request.provider or "auto"
-    if provider not in {"auto", "codex", "openai"}:
+    if provider not in {"auto", "codex", "openai", "openrouter"}:
         raise HTTPException(status_code=502, detail="The local fallback provider has been removed.")
     pdf_path = PAPERS_DIR / paper["stored_pdf"]
     if not pdf_path.exists():
