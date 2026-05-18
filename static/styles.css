@@ -933,6 +933,10 @@ h2 {
   max-height: none;
 }
 
+.compact-tab-panel {
+  max-height: 150px;
+}
+
 .takeaways-resize-handle {
   position: relative;
   height: 12px;

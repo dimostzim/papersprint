@@ -110,7 +110,13 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
     assert "Key takeaways should be understandable to a researcher outside this exact subfield" in prompt
+    assert '"not_shown": ["1-3 important things' in prompt
+    assert '"code_availability": ["1-2 notes' in prompt
+    assert '"reviewer_questions": ["3-5 concrete questions' in prompt
     assert "[plain-language meaning]" in prompt
+    assert "When a figure or table is central evidence for a takeaway" in prompt
+    assert "Not-shown items should prevent common over-reading" in prompt
+    assert "Reviewer questions should be specific requests" in prompt
     assert "do not optimize for the absolute minimum" in prompt
     assert "Use the problem label for the task" in prompt
     assert "Use the solution label for the paper's proposed" in prompt
@@ -184,6 +190,9 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
     payload = {
         "title": "Useful paper",
         "background_notes": ["RNA interference: A way to reduce target gene expression."],
+        "not_shown": ["The paper does not test clinical deployment."],
+        "code_availability": ["Code release is unclear from the provided text."],
+        "reviewer_questions": ["Can the authors release the evaluation scripts?"],
         "highlights": [
             {"label": "problem", "snippet": str(index), "reason": "reason", "comment": "comment"}
             for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
@@ -194,6 +203,9 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
 
     assert len(analysis["highlights"]) == MAX_ANALYSIS_HIGHLIGHTS
     assert analysis["background_notes"] == ["RNA interference: A way to reduce target gene expression."]
+    assert analysis["not_shown"] == ["The paper does not test clinical deployment."]
+    assert analysis["code_availability"] == ["Code release is unclear from the provided text."]
+    assert analysis["reviewer_questions"] == ["Can the authors release the evaluation scripts?"]
     assert analysis["highlights"][0]["comment"] == "comment"
 
 

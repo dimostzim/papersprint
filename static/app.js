@@ -91,6 +91,12 @@ const els = {
   backgroundNotes: document.getElementById("background-notes"),
   takeawaysTab: document.getElementById("takeaways-tab"),
   takeawaysResizeHandle: document.getElementById("takeaways-resize-handle"),
+  notShownSection: document.getElementById("not-shown-section"),
+  notShownList: document.getElementById("not-shown-list"),
+  codeSection: document.getElementById("code-section"),
+  codeList: document.getElementById("code-list"),
+  reviewerSection: document.getElementById("reviewer-section"),
+  reviewerQuestions: document.getElementById("reviewer-questions"),
   chatMessages: document.getElementById("chat-messages"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
@@ -720,6 +726,9 @@ function clearSelectedPaper() {
     els.paperOverview.textContent = "";
   }
   renderBackgroundNotes([]);
+  renderOptionalSummaryList(els.notShownSection, els.notShownList, []);
+  renderOptionalSummaryList(els.codeSection, els.codeList, []);
+  renderOptionalSummaryList(els.reviewerSection, els.reviewerQuestions, []);
   syncPdfZoomControls();
   if (els.highlightCount) {
     els.highlightCount.textContent = "0";
@@ -759,6 +768,9 @@ function renderPaperDetails(paper) {
     els.paperOverview.textContent = paper.overview || "";
   }
   renderBackgroundNotes(paper.background_notes || []);
+  renderOptionalSummaryList(els.notShownSection, els.notShownList, paper.not_shown || []);
+  renderOptionalSummaryList(els.codeSection, els.codeList, paper.code_availability || []);
+  renderOptionalSummaryList(els.reviewerSection, els.reviewerQuestions, paper.reviewer_questions || []);
   const highlights = paper.highlights || [];
   if (
     state.activeHighlightFacet !== "all"
@@ -870,6 +882,14 @@ function renderBackgroundNotes(notes) {
   els.backgroundSection?.classList.toggle("hidden", !items.length);
   if (els.backgroundNotes) {
     renderListPanel(els.backgroundNotes, items);
+  }
+}
+
+function renderOptionalSummaryList(section, target, items) {
+  const values = items || [];
+  section?.classList.toggle("hidden", !values.length);
+  if (target) {
+    renderListPanel(target, values);
   }
 }
 

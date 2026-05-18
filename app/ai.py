@@ -137,6 +137,9 @@ Return JSON with exactly this shape:
   "overview": "3-5 sentence plain summary",
   "background_notes": ["3-5 short beginner-friendly notes explaining early terms, acronyms, datasets, or concepts needed to read this paper"],
   "key_takeaways": ["4-7 concrete takeaways with bracketed plain-language clarification when a technical term needs it"],
+  "not_shown": ["1-3 important things the paper does not show or should not be over-interpreted as showing"],
+  "code_availability": ["1-2 notes on whether code, data, models, or reproduction artifacts appear released and usable"],
+  "reviewer_questions": ["3-5 concrete questions or clarification requests a critical reviewer would ask"],
   "read_this_first": ["3-5 specific paper areas or excerpts to inspect first"],
   "glossary": [{{"term": "term or acronym", "definition": "short paper-specific definition"}}],
   "highlights": [
@@ -153,6 +156,10 @@ Return JSON with exactly this shape:
 Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
+- When a figure or table is central evidence for a takeaway, reference it briefly in the takeaway, e.g. "(Fig. 2)" or "(Table 1)". Do not force figure references when the text does not support them.
+- Not-shown items should prevent common over-reading: state what the paper did not demonstrate, did not compare, did not validate, or did not make usable.
+- Code availability should use only paper text. Say when release or usability is unclear.
+- Reviewer questions should be specific requests a reviewer would ask the authors to clarify, test, release, or bound.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
 - Add a highlight only if it changes the reader's understanding of the problem, solution, novelty, method, evidence, tradeoff, failure mode, or claim limitation.
 - Abstract highlights are allowed when they provide useful orientation, especially for problem, solution, novelty, and main result.
@@ -450,6 +457,9 @@ def normalize_analysis(payload: dict[str, Any], extracted: ExtractedPaper) -> di
         "overview": normalize_text(str(payload.get("overview") or "")),
         "background_notes": list_of_strings("background_notes", 6),
         "key_takeaways": list_of_strings("key_takeaways", 8),
+        "not_shown": list_of_strings("not_shown", 4),
+        "code_availability": list_of_strings("code_availability", 3),
+        "reviewer_questions": list_of_strings("reviewer_questions", 6),
         "read_this_first": list_of_strings("read_this_first", 6),
         "glossary": [
             {
