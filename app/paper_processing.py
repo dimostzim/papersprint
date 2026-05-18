@@ -328,28 +328,54 @@ def highlight_position(highlight: dict[str, Any]) -> tuple[int, float, float]:
 def sanitize_label(label: str) -> str:
     normalized = re.sub(r"[^a-z]+", "", label.lower())
     aliases = {
-        "objective": "goal",
-        "task": "goal",
-        "problem": "goal",
+        "goal": "problem",
+        "objective": "problem",
+        "task": "problem",
         "contribution": "novelty",
         "novel": "novelty",
         "new": "novelty",
+        "approach": "solution",
+        "intervention": "solution",
         "finding": "result",
         "results": "result",
         "evidence": "result",
-        "evaluation": "result",
-        "approach": "method",
+        "benchmark": "benchmarking",
+        "benchmarks": "benchmarking",
+        "evaluation": "benchmarking",
+        "comparison": "benchmarking",
         "methods": "method",
         "mechanism": "method",
-        "intervention": "method",
-        "caveat": "limitation",
-        "constraint": "limitation",
-        "tradeoff": "limitation",
+        "caveat": "tradeoff",
+        "constraint": "tradeoff",
+        "catch": "tradeoff",
+        "tradeoffs": "tradeoff",
+        "hyperparameter": "compute",
+        "hyperparameters": "compute",
+        "hardware": "compute",
+        "runtime": "compute",
+        "ablationstudy": "ablation",
+        "ablations": "ablation",
+        "failures": "failure",
+        "failuremode": "failure",
+        "failuremodes": "failure",
     }
     normalized = aliases.get(normalized, normalized)
-    if normalized in {"goal", "novelty", "method", "result", "limitation"}:
+    allowed = {
+        "problem",
+        "solution",
+        "novelty",
+        "method",
+        "benchmarking",
+        "result",
+        "ablation",
+        "compute",
+        "tradeoff",
+        "limitation",
+        "failure",
+    }
+    if normalized in allowed:
         return normalized
-    return "goal"
+    return "problem"
 
 
 def public_page_sizes(pages: list[dict[str, Any]]) -> list[dict[str, float | int]]:

@@ -106,13 +106,18 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
 
     prompt = build_analysis_prompt(extracted)
 
-    assert "goal|novelty|method|result|limitation" in prompt
+    assert "problem|solution|novelty|method|benchmarking|result|ablation|compute|tradeoff|limitation|failure" in prompt
     assert '"background_notes": ["3-5 short beginner-friendly notes' in prompt
     assert "Background notes should define or contextualize important terms" in prompt
     assert "Key takeaways should be understandable to a researcher outside this exact subfield" in prompt
     assert "[plain-language meaning]" in prompt
     assert "do not optimize for the absolute minimum" in prompt
+    assert "Use the problem label for the task" in prompt
+    assert "Use the solution label for the paper's proposed" in prompt
     assert "Use the novelty label for contribution claims" in prompt
+    assert "Use the benchmarking label for benchmark construction" in prompt
+    assert "Use the compute label for hyperparameters" in prompt
+    assert "Use the failure label for reported failure modes" in prompt
     assert "Use the limitation label only for limitations of this paper's own data" in prompt
     assert "Do not label weaknesses of prior work or background motivation as limitation" in prompt
     assert "Never end a snippet mid-word or mid-sentence" in prompt
@@ -180,7 +185,7 @@ def test_normalize_analysis_caps_highlights_to_hard_limit():
         "title": "Useful paper",
         "background_notes": ["RNA interference: A way to reduce target gene expression."],
         "highlights": [
-            {"label": "goal", "snippet": str(index), "reason": "reason", "comment": "comment"}
+            {"label": "problem", "snippet": str(index), "reason": "reason", "comment": "comment"}
             for index in range(MAX_ANALYSIS_HIGHLIGHTS + 5)
         ],
     }
@@ -202,12 +207,16 @@ def test_normalize_highlight_snippet_does_not_cut_mid_sentence():
 
 
 def test_sanitize_label_uses_guided_reading_facets():
-    assert sanitize_label("objective") == "goal"
+    assert sanitize_label("objective") == "problem"
     assert sanitize_label("contribution") == "novelty"
-    assert sanitize_label("approach") == "method"
+    assert sanitize_label("approach") == "solution"
     assert sanitize_label("evidence") == "result"
-    assert sanitize_label("tradeoff") == "limitation"
-    assert sanitize_label("definition") == "goal"
+    assert sanitize_label("evaluation") == "benchmarking"
+    assert sanitize_label("tradeoff") == "tradeoff"
+    assert sanitize_label("hyperparameters") == "compute"
+    assert sanitize_label("ablation study") == "ablation"
+    assert sanitize_label("failure modes") == "failure"
+    assert sanitize_label("definition") == "problem"
 
 
 def test_build_selection_explanation_prompt_uses_selection_and_page_context():

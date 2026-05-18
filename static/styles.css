@@ -32,14 +32,26 @@
   --strong-surface: #1f2528;
   --strong-surface-text: #ffffff;
   --label-goal-bg: rgba(23, 107, 135, 0.16);
+  --label-solution-bg: rgba(63, 125, 88, 0.16);
+  --label-solution-text: #315f44;
   --label-method-bg: rgba(63, 125, 88, 0.16);
   --label-method-text: #315f44;
+  --label-benchmarking-bg: rgba(71, 128, 180, 0.18);
+  --label-benchmarking-text: #275d8a;
   --label-novelty-bg: rgba(118, 102, 168, 0.18);
   --label-novelty-text: #594987;
   --label-result-bg: rgba(229, 163, 33, 0.22);
   --label-result-text: #80570e;
+  --label-ablation-bg: rgba(179, 128, 50, 0.2);
+  --label-ablation-text: #795115;
+  --label-compute-bg: rgba(92, 107, 116, 0.16);
+  --label-compute-text: #4b5961;
+  --label-tradeoff-bg: rgba(218, 115, 50, 0.18);
+  --label-tradeoff-text: #8b471b;
   --label-limitation-bg: rgba(184, 92, 92, 0.18);
   --label-limitation-text: #8d3f3f;
+  --label-failure-bg: rgba(184, 70, 70, 0.2);
+  --label-failure-text: #8d3030;
   --label-important-bg: rgba(65, 72, 77, 0.12);
   --label-important-text: #3f484d;
   --shadow: 0 12px 30px rgba(23, 34, 38, 0.11);
@@ -74,14 +86,26 @@ html[data-theme="dark"] {
   --strong-surface: #2b3430;
   --strong-surface-text: #eff3f1;
   --label-goal-bg: rgba(95, 181, 199, 0.18);
+  --label-solution-bg: rgba(99, 188, 132, 0.18);
+  --label-solution-text: #9bd7ad;
   --label-method-bg: rgba(99, 188, 132, 0.18);
   --label-method-text: #9bd7ad;
+  --label-benchmarking-bg: rgba(105, 174, 231, 0.18);
+  --label-benchmarking-text: #9acdf5;
   --label-novelty-bg: rgba(177, 158, 235, 0.2);
   --label-novelty-text: #c8bdf5;
   --label-result-bg: rgba(229, 163, 33, 0.2);
   --label-result-text: #f3c56f;
+  --label-ablation-bg: rgba(197, 148, 72, 0.2);
+  --label-ablation-text: #e1b878;
+  --label-compute-bg: rgba(177, 190, 196, 0.16);
+  --label-compute-text: #c5d0d5;
+  --label-tradeoff-bg: rgba(239, 147, 84, 0.2);
+  --label-tradeoff-text: #f4b58a;
   --label-limitation-bg: rgba(226, 126, 126, 0.2);
   --label-limitation-text: #f1a1a1;
+  --label-failure-bg: rgba(231, 96, 96, 0.2);
+  --label-failure-text: #f0a0a0;
   --label-important-bg: rgba(207, 216, 220, 0.14);
   --label-important-text: #d2d9dc;
   --shadow: 0 14px 34px rgba(0, 0, 0, 0.36);
@@ -570,14 +594,25 @@ h2 {
   background: var(--accent-soft);
 }
 
-.label-goal {
+.label-goal,
+.label-problem {
   background: var(--label-goal-bg);
   color: var(--accent-text);
+}
+
+.label-solution {
+  background: var(--label-solution-bg);
+  color: var(--label-solution-text);
 }
 
 .label-method {
   background: var(--label-method-bg);
   color: var(--label-method-text);
+}
+
+.label-benchmarking {
+  background: var(--label-benchmarking-bg);
+  color: var(--label-benchmarking-text);
 }
 
 .label-novelty {
@@ -590,9 +625,29 @@ h2 {
   color: var(--label-result-text);
 }
 
+.label-ablation {
+  background: var(--label-ablation-bg);
+  color: var(--label-ablation-text);
+}
+
+.label-compute {
+  background: var(--label-compute-bg);
+  color: var(--label-compute-text);
+}
+
+.label-tradeoff {
+  background: var(--label-tradeoff-bg);
+  color: var(--label-tradeoff-text);
+}
+
 .label-limitation {
   background: var(--label-limitation-bg);
   color: var(--label-limitation-text);
+}
+
+.label-failure {
+  background: var(--label-failure-bg);
+  color: var(--label-failure-text);
 }
 
 .label-important {
@@ -743,12 +798,21 @@ h2 {
   outline: 2px solid var(--accent);
 }
 
-.highlight-rect.label-goal {
+.highlight-rect.label-goal,
+.highlight-rect.label-problem {
   background: #72c9e8;
+}
+
+.highlight-rect.label-solution {
+  background: #4fb07a;
 }
 
 .highlight-rect.label-method {
   background: #8ed6a8;
+}
+
+.highlight-rect.label-benchmarking {
+  background: #6fb4e8;
 }
 
 .highlight-rect.label-novelty {
@@ -759,8 +823,24 @@ h2 {
   background: #ffd36d;
 }
 
+.highlight-rect.label-ablation {
+  background: #caa66a;
+}
+
+.highlight-rect.label-compute {
+  background: #8fa0a8;
+}
+
+.highlight-rect.label-tradeoff {
+  background: #f0a36f;
+}
+
 .highlight-rect.label-limitation {
   background: #e99797;
+}
+
+.highlight-rect.label-failure {
+  background: #d86969;
 }
 
 .highlight-rect.label-important {

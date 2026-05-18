@@ -5,19 +5,32 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 const HIGHLIGHT_FACETS = [
   { id: "all", label: "All" },
-  { id: "goal", label: "Goal" },
+  { id: "problem", label: "Problem" },
+  { id: "solution", label: "Solution" },
   { id: "novelty", label: "Novelty" },
   { id: "method", label: "Method" },
+  { id: "benchmarking", label: "Benchmarking" },
   { id: "result", label: "Result" },
+  { id: "ablation", label: "Ablation" },
+  { id: "compute", label: "Compute" },
+  { id: "tradeoff", label: "Tradeoff" },
   { id: "limitation", label: "Limitation" },
+  { id: "failure", label: "Failure" },
 ];
 
 const DEFAULT_HIGHLIGHT_COLORS = {
   goal: "#72c9e8",
+  problem: "#72c9e8",
+  solution: "#4fb07a",
   method: "#8ed6a8",
   novelty: "#b8a8ea",
+  benchmarking: "#6fb4e8",
   result: "#ffd36d",
+  ablation: "#caa66a",
+  compute: "#8fa0a8",
+  tradeoff: "#f0a36f",
   limitation: "#e99797",
+  failure: "#d86969",
   important: "#b6bec3",
 };
 
@@ -1824,7 +1837,7 @@ function renderSelectionHighlightCategories() {
       <option value="__new__">New category</option>`,
   );
 
-  const preferred = state.activeHighlightFacet !== "all" ? state.activeHighlightFacet : "goal";
+  const preferred = state.activeHighlightFacet !== "all" ? state.activeHighlightFacet : "problem";
   els.highlightCategorySelect.value = options.some((option) => option.id === preferred)
     ? preferred
     : options[0]?.id || "__new__";
@@ -2010,7 +2023,7 @@ async function saveHighlights(highlights, message) {
 }
 
 function selectedHighlightCategory() {
-  const value = els.highlightCategorySelect?.value || "goal";
+  const value = els.highlightCategorySelect?.value || "problem";
   if (value !== "__new__") {
     const option = highlightCategoryOptions(state.selectedPaper?.highlights || [])
       .find((item) => item.id === value);

@@ -141,7 +141,7 @@ Return JSON with exactly this shape:
   "glossary": [{{"term": "term or acronym", "definition": "short paper-specific definition"}}],
   "highlights": [
     {{
-      "label": "goal|novelty|method|result|limitation",
+      "label": "problem|solution|novelty|method|benchmarking|result|ablation|compute|tradeoff|limitation|failure",
       "snippet": "one complete sentence copied exactly from the paper text, usually 90-260 characters",
       "reason": "why this excerpt helps fast comprehension",
       "comment": "short plain-language explanation of what this highlight means and why it matters"
@@ -154,18 +154,24 @@ Highlight requirements:
 - Background notes should define or contextualize important terms that appear early in the paper. Keep them short, practical, and specific to this paper.
 - Key takeaways should be understandable to a researcher outside this exact subfield. Keep the paper-specific claim, but add a short bracketed explanation when needed, e.g. [plain-language meaning]. Avoid assuming the reader already knows the benchmark, assay, model family, or domain acronym.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
-- Add a highlight only if it changes the reader's understanding of the task, novelty, method, evidence, or claim limitation.
-- Abstract highlights are allowed when they provide useful orientation, especially for goal, novelty, and main result.
+- Add a highlight only if it changes the reader's understanding of the problem, solution, novelty, method, evidence, tradeoff, failure mode, or claim limitation.
+- Abstract highlights are allowed when they provide useful orientation, especially for problem, solution, novelty, and main result.
 - Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, and limits when they exist.
 - If an abstract sentence is the clearest compact statement of the paper's contribution or result, include it; otherwise prefer the more specific body sentence.
 - Do not highlight title, author, affiliation, contact, availability, license, preprint, or header/footer text.
 - Do not cluster the set in the opening motivation; later method, evaluation, result, and this-paper limitation passages are usually more useful.
-- Use the goal label for the task, problem statement, or motivating failure mode that this paper addresses.
+- Use the problem label for the task, problem statement, motivating failure mode, or gap that this paper addresses.
+- Use the solution label for the paper's proposed system, model, dataset, workflow, intervention, or main answer to the problem.
 - Use the novelty label for contribution claims: new systems, datasets, benchmarks, architectures, workflows, evaluation framing, or claimed differences from prior work.
 - Use the method label for this paper's data construction, model, system, protocol, evaluation design, or analysis procedure.
+- Use the benchmarking label for benchmark construction, evaluation setup, baselines, metrics, leaderboards, test splits, or head-to-head comparisons.
 - Use the result label for this paper's findings, measured evidence, comparisons, rankings, or empirical interpretations.
-- Use the limitation label only for limitations of this paper's own data, method, evaluation, assumptions, claims, or generalizability. Do not label weaknesses of prior work or background motivation as limitation; label those as goal when they define the problem.
-- Prefer a balanced guided skim across goal, novelty, method, result, and limitation when those facets are present, but do not force equal counts or invent missing facets.
+- Use the ablation label for controlled component-removal, sensitivity, or variant studies.
+- Use the compute label for hyperparameters, runtime, hardware, training cost, model size, data scale, or other reproducibility-critical implementation details.
+- Use the tradeoff label for the catch: costs, constraints, assumptions, usability limits, or cases where the solution buys one thing by giving up another.
+- Use the limitation label only for limitations of this paper's own data, method, evaluation, assumptions, claims, or generalizability. Do not label weaknesses of prior work or background motivation as limitation; label those as problem when they define the problem.
+- Use the failure label for reported failure modes, negative cases, error analysis, or situations where the proposed approach breaks down.
+- Prefer a balanced guided skim across relevant labels when those facets are present, but do not force every label or invent missing facets.
 - Stop when the next highlight repeats an idea already covered.
 - Highlights must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
 - Avoid adjacent highlights unless they serve different labels.
