@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
@@ -70,7 +71,7 @@ MAX_CONTEXTS_PER_CITATION = 64
 MAX_REFERENCE_CHARS = 1400
 MAX_CONTEXT_CHARS = 700
 MAX_RECTS_PER_CITATION_CONTEXT = 32
-CITATION_VERSION = 3
+CITATION_VERSION = 5
 
 
 def extract_citations(extracted: ExtractedPaper) -> list[dict[str, Any]]:
@@ -196,6 +197,14 @@ def ground_citation_rects(pdf_path: Path, citations: list[dict[str, Any]]) -> li
                     rects = page.search_for(search_text)
                     if rects:
                         break
+                word_rects = marker_rects_from_words(page, marker)
+                if word_rects:
+                    rects = word_rects
+                if not rects:
+                    for search_text in citation_search_variants(marker, context, include_author_fallback=True):
+                        rects = page.search_for(search_text)
+                        if rects:
+                            break
 
                 context["rects"] = [
                     [round(rect.x0, 2), round(rect.y0, 2), round(rect.x1, 2), round(rect.y1, 2)]
@@ -206,7 +215,11 @@ def ground_citation_rects(pdf_path: Path, citations: list[dict[str, Any]]) -> li
     return grounded
 
 
-def citation_search_variants(marker: str) -> list[str]:
+def citation_search_variants(
+    marker: str,
+    context: dict[str, Any] | None = None,
+    include_author_fallback: bool = False,
+) -> list[str]:
     variants = [marker]
     if marker.startswith("(") and marker.endswith(")"):
         variants.append(marker[1:-1])
@@ -224,16 +237,87 @@ def citation_search_variants(marker: str) -> list[str]:
     for variant in list(variants):
         variants.extend(
             [
+                strip_diacritics(variant),
                 variant.replace("-", "–"),
                 variant.replace("–", "-").replace("—", "-"),
             ]
         )
+
+    first_author = str((context or {}).get("first_author", "")).strip()
+    if include_author_fallback and first_author:
+        for author_variant in [first_author, strip_diacritics(first_author)]:
+            clean_author = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ'’-]+", "", author_variant)
+            if len(clean_author) >= 5:
+                variants.append(clean_author)
+            if len(clean_author) >= 7:
+                variants.append(clean_author[:-1])
 
     unique_variants = []
     for variant in variants:
         if variant and variant not in unique_variants:
             unique_variants.append(variant)
     return unique_variants
+
+
+def marker_rects_from_words(page: fitz.Page, marker: str) -> list[fitz.Rect]:
+    marker_tokens = citation_marker_tokens(marker)
+    if not marker_tokens:
+        return []
+
+    words = page.get_text("words")
+    word_entries = [
+        {
+            "rect": fitz.Rect(word[:4]),
+            "tokens": citation_marker_tokens(str(word[4])),
+            "block": int(word[5]),
+            "line": int(word[6]),
+        }
+        for word in words
+        if citation_marker_tokens(str(word[4]))
+    ]
+    token_entries = [
+        {**entry, "token": token}
+        for entry in word_entries
+        for token in entry["tokens"]
+    ]
+    match = marker_token_span(token_entries, marker_tokens)
+    if not match:
+        return []
+
+    matched_entries = token_entries[match[0] : match[1]]
+    rects_by_line: dict[tuple[int, int], fitz.Rect] = {}
+    for entry in matched_entries:
+        key = (entry["block"], entry["line"])
+        rects_by_line[key] = rects_by_line[key] | entry["rect"] if key in rects_by_line else fitz.Rect(entry["rect"])
+    return list(rects_by_line.values())
+
+
+def citation_marker_tokens(value: str) -> list[str]:
+    normalized = strip_diacritics(clean_citation_text(value)).lower()
+    return re.findall(r"[a-z0-9]+", normalized)
+
+
+def marker_token_span(token_entries: list[dict[str, Any]], marker_tokens: list[str]) -> tuple[int, int] | None:
+    for start in range(0, len(token_entries)):
+        cursor = start
+        matched = True
+        for marker_token in marker_tokens:
+            combined = ""
+            while cursor < len(token_entries) and len(combined) < len(marker_token):
+                next_value = combined + token_entries[cursor]["token"]
+                if not marker_token.startswith(next_value):
+                    matched = False
+                    break
+                combined = next_value
+                cursor += 1
+                if combined == marker_token:
+                    break
+            if not matched or combined != marker_token:
+                matched = False
+                break
+        if matched:
+            return start, cursor
+    return None
 
 
 def split_body_and_references(extracted: ExtractedPaper) -> tuple[list[dict[str, Any]], str]:
@@ -385,7 +469,7 @@ def collect_inline_contexts(body_pages: list[dict[str, Any]]) -> dict[int, list[
 
     for page in body_pages:
         page_number = int(page.get("page_number", 0))
-        page_text = normalize_text(str(page.get("text", "")))
+        page_text = clean_citation_text(page.get("text", ""))
         for marker in INLINE_CITATION_RE.finditer(page_text):
             context_sentence = context_around_match(page_text, marker.start(), marker.end())
             for number in expand_citation_numbers(marker.group(1)):
@@ -413,7 +497,7 @@ def collect_author_year_contexts(body_pages: list[dict[str, Any]]) -> dict[str, 
     seen: set[tuple[str, str, str]] = set()
     for page in body_pages:
         page_number = int(page.get("page_number", 0))
-        page_text = normalize_text(str(page.get("text", "")))
+        page_text = clean_citation_text(page.get("text", ""))
         parenthetical_spans = []
 
         for parenthetical in AUTHOR_YEAR_PAREN_RE.finditer(page_text):
@@ -497,7 +581,7 @@ def context_around_match(text: str, start: int, end: int) -> str:
 
 
 def author_year_key(first_author: str, year: str) -> str:
-    return f"{first_author.lower()}:{year[:4]}"
+    return f"{author_key_text(first_author)}:{year[:4]}"
 
 
 def reference_author_year_key(reference: dict[str, Any]) -> str:
@@ -545,8 +629,24 @@ def expand_citation_numbers(value: str) -> list[int]:
 
 
 def clean_reference(value: str) -> str:
-    text = normalize_text(CONTROL_RE.sub("", str(value)).replace("\xad", ""))
+    text = clean_citation_text(value)
     return re.sub(r"\s+", " ", text).strip(" .")
+
+
+def clean_citation_text(value: Any) -> str:
+    return normalize_text(CONTROL_RE.sub("", str(value)).replace("\xad", ""))
+
+
+def strip_diacritics(value: str) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(character)
+    )
+
+
+def author_key_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", strip_diacritics(clean_citation_text(value)).lower())
 
 
 def extract_year(raw_reference: str) -> str:

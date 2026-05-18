@@ -115,6 +115,24 @@ def test_extract_citations_maps_author_year_mentions_with_comma():
     assert citations[0]["contexts"][0]["marker"] == "Smith et al., 2020"
 
 
+def test_extract_citations_removes_pdf_control_chars_inside_author_names():
+    extracted = extracted_from_pages(
+        "Noncanonical sites were reported by Klimentov\x13a et al. 2022.",
+        (
+            "References\n"
+            "Klimentova E, Hejret V, Krcmar J et al. miRBind: a deep learning "
+            "method for miRNA binding classification. Genes (Basel) 2022;13:2323."
+        ),
+    )
+
+    citations = extract_citations(extracted)
+
+    assert citations[0]["label"] == "Klimentova et al. 2022"
+    assert citations[0]["resolved"] is True
+    assert citations[0]["contexts"][0]["marker"] == "Klimentova et al. 2022"
+    assert citations[0]["raw_reference"].startswith("Klimentova E")
+
+
 def test_extract_citations_maps_two_author_mentions_to_contexts():
     extracted = extracted_from_pages(
         "Disease studies discuss signatures in cancer (Calin and Croce 2006).",
@@ -230,3 +248,62 @@ def test_ground_citation_rects_uses_spacing_variants(tmp_path):
 
     assert citations[0]["contexts"][0]["rects"]
     assert citations[1]["contexts"][0]["rects"]
+
+
+def test_ground_citation_rects_falls_back_to_author_prefix_for_diacritics(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=200)
+    page.insert_text((40, 60), "Prior work (Klimentová et al. 2022) supports this.")
+    author_rect = page.search_for("Klimentová")[0]
+    year_rect = page.search_for("2022")[0]
+    doc.save(pdf_path)
+    doc.close()
+
+    extracted = extracted_from_pages(
+        "Prior work (Klimentov\x13a et al. 2022) supports this.",
+        (
+            "References\n"
+            "Klimentova E, Hejret V, Krcmar J et al. miRBind: a deep learning "
+            "method for miRNA binding classification. Genes (Basel) 2022;13:2323."
+        ),
+    )
+
+    citations = ground_citation_rects(pdf_path, extract_citations(extracted))
+
+    assert citations[0]["contexts"][0]["marker"] == "Klimentova et al. 2022"
+    assert citations[0]["contexts"][0]["rects"]
+    citation_rect = fitz.Rect(citations[0]["contexts"][0]["rects"][0])
+    assert citation_rect.x0 <= author_rect.x0
+    assert citation_rect.x1 >= year_rect.x1
+
+
+def test_ground_citation_rects_spans_split_author_year_marker(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=200)
+    page.insert_text((40, 60), "Prior work (Klimentov a et al. 2022) supports this.")
+    author_rect = page.search_for("Klimentov")[0]
+    year_rect = page.search_for("2022")[0]
+    doc.save(pdf_path)
+    doc.close()
+
+    citations = [
+        {
+            "label": "Klimentova et al. 2022",
+            "contexts": [
+                {
+                    "page_number": 1,
+                    "marker": "Klimentova et al. 2022",
+                    "first_author": "Klimentova",
+                    "year": "2022",
+                }
+            ],
+        }
+    ]
+
+    grounded = ground_citation_rects(pdf_path, citations)
+
+    citation_rect = fitz.Rect(grounded[0]["contexts"][0]["rects"][0])
+    assert citation_rect.x0 <= author_rect.x0
+    assert citation_rect.x1 >= year_rect.x1
