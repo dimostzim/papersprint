@@ -71,7 +71,7 @@ MAX_CONTEXTS_PER_CITATION = 64
 MAX_REFERENCE_CHARS = 1400
 MAX_CONTEXT_CHARS = 700
 MAX_RECTS_PER_CITATION_CONTEXT = 32
-CITATION_VERSION = 5
+CITATION_VERSION = 6
 
 
 def extract_citations(extracted: ExtractedPaper) -> list[dict[str, Any]]:
@@ -280,16 +280,19 @@ def marker_rects_from_words(page: fitz.Page, marker: str) -> list[fitz.Rect]:
         for entry in word_entries
         for token in entry["tokens"]
     ]
-    match = marker_token_span(token_entries, marker_tokens)
-    if not match:
+    spans = marker_token_spans(token_entries, marker_tokens)
+    if not spans:
         return []
 
-    matched_entries = token_entries[match[0] : match[1]]
-    rects_by_line: dict[tuple[int, int], fitz.Rect] = {}
-    for entry in matched_entries:
-        key = (entry["block"], entry["line"])
-        rects_by_line[key] = rects_by_line[key] | entry["rect"] if key in rects_by_line else fitz.Rect(entry["rect"])
-    return list(rects_by_line.values())
+    rects: list[fitz.Rect] = []
+    for start, end in spans:
+        matched_entries = token_entries[start:end]
+        rects_by_line: dict[tuple[int, int], fitz.Rect] = {}
+        for entry in matched_entries:
+            key = (entry["block"], entry["line"])
+            rects_by_line[key] = rects_by_line[key] | entry["rect"] if key in rects_by_line else fitz.Rect(entry["rect"])
+        rects.extend(rects_by_line.values())
+    return rects
 
 
 def citation_marker_tokens(value: str) -> list[str]:
@@ -297,7 +300,8 @@ def citation_marker_tokens(value: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", normalized)
 
 
-def marker_token_span(token_entries: list[dict[str, Any]], marker_tokens: list[str]) -> tuple[int, int] | None:
+def marker_token_spans(token_entries: list[dict[str, Any]], marker_tokens: list[str]) -> list[tuple[int, int]]:
+    spans = []
     for start in range(0, len(token_entries)):
         cursor = start
         matched = True
@@ -306,18 +310,32 @@ def marker_token_span(token_entries: list[dict[str, Any]], marker_tokens: list[s
             while cursor < len(token_entries) and len(combined) < len(marker_token):
                 next_value = combined + token_entries[cursor]["token"]
                 if not marker_token.startswith(next_value):
+                    if marker_token_fuzzy_matches_word_text(marker_token, combined):
+                        break
                     matched = False
                     break
                 combined = next_value
                 cursor += 1
                 if combined == marker_token:
                     break
-            if not matched or combined != marker_token:
+            if not matched or not marker_token_matches_word_text(marker_token, combined):
                 matched = False
                 break
         if matched:
-            return start, cursor
-    return None
+            spans.append((start, cursor))
+    return spans
+
+
+def marker_token_matches_word_text(marker_token: str, word_text: str) -> bool:
+    return marker_token == word_text or marker_token_fuzzy_matches_word_text(marker_token, word_text)
+
+
+def marker_token_fuzzy_matches_word_text(marker_token: str, word_text: str) -> bool:
+    return (
+        len(marker_token) >= 6
+        and len(marker_token) - len(word_text) == 1
+        and marker_token.startswith(word_text)
+    )
 
 
 def split_body_and_references(extracted: ExtractedPaper) -> tuple[list[dict[str, Any]], str]:

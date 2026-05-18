@@ -307,3 +307,54 @@ def test_ground_citation_rects_spans_split_author_year_marker(tmp_path):
     citation_rect = fitz.Rect(grounded[0]["contexts"][0]["rects"][0])
     assert citation_rect.x0 <= author_rect.x0
     assert citation_rect.x1 >= year_rect.x1
+
+
+def test_ground_citation_rects_spans_author_with_missing_final_letter(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=200)
+    page.insert_text((40, 60), "Prior work (Klimentov et al. 2022) supports this.")
+    author_rect = page.search_for("Klimentov")[0]
+    year_rect = page.search_for("2022")[0]
+    doc.save(pdf_path)
+    doc.close()
+
+    citations = [
+        {
+            "label": "Klimentova et al. 2022",
+            "contexts": [
+                {
+                    "page_number": 1,
+                    "marker": "Klimentova et al. 2022",
+                    "first_author": "Klimentova",
+                    "year": "2022",
+                }
+            ],
+        }
+    ]
+
+    grounded = ground_citation_rects(pdf_path, citations)
+
+    citation_rect = fitz.Rect(grounded[0]["contexts"][0]["rects"][0])
+    assert citation_rect.x0 <= author_rect.x0
+    assert citation_rect.x1 >= year_rect.x1
+
+
+def test_ground_citation_rects_keeps_repeated_author_year_markers_on_page(tmp_path):
+    pdf_path = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=500, height=240)
+    page.insert_text((40, 60), "First claim (Hejret et al. 2023) supports this.")
+    page.insert_text((40, 100), "Second claim (Hejret et al. 2023) supports that.")
+    doc.save(pdf_path)
+    doc.close()
+
+    extracted = extracted_from_pages(
+        "First claim (Hejret et al. 2023) supports this. Second claim (Hejret et al. 2023) supports that.",
+        "References\nHejret V et al. Analysis of chimeric reads. Sci Rep 2023;13:22895.",
+    )
+
+    grounded = ground_citation_rects(pdf_path, extract_citations(extracted))
+
+    assert len(grounded[0]["contexts"]) == 2
+    assert len(grounded[0]["contexts"][0]["rects"]) == 2
