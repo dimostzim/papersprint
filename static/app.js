@@ -2361,6 +2361,10 @@ function renderPageHighlights(overlay, highlights, pageSize, viewport) {
       node.style.height = `${Math.max(6, (y1 - y0) * scaleY)}px`;
       node.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (event.detail === 0 || node.dataset.suppressClick === "true") {
+          delete node.dataset.suppressClick;
+          return;
+        }
         showHighlightPopover(highlight.highlightIndex, node.getBoundingClientRect());
       });
       overlay.appendChild(node);
@@ -2957,7 +2961,7 @@ function customSelectionFromDrag(drag, event) {
 }
 
 function startTextSelection(event) {
-  if (event.button !== 0 || event.target.closest?.(".highlight-rect, .citation-rect, .figure-rect")) {
+  if (event.button !== 0 || event.target.closest?.(".citation-rect, .figure-rect")) {
     return;
   }
 
@@ -2975,6 +2979,7 @@ function startTextSelection(event) {
     y: point.y,
     clientX: event.clientX,
     clientY: event.clientY,
+    overlayTarget: event.target.closest?.(".highlight-rect") || null,
   };
   window.getSelection()?.removeAllRanges();
   hideSelectionPopover();
@@ -2995,6 +3000,8 @@ function updateTextSelection(event) {
     clearSelectionPreview();
     return;
   }
+
+  drag.overlayTarget?.setAttribute("data-suppress-click", "true");
 
   const selection = customSelectionFromDrag(drag, event);
   if (selection) {
@@ -3194,6 +3201,8 @@ function showHighlightPopover(highlightIndex, rect) {
 
 function hideHighlightPopover() {
   state.activeHighlightIndex = null;
+  els.highlightList?.querySelectorAll(".highlight-card").forEach((node) => node.classList.remove("active"));
+  els.pdfViewer?.querySelectorAll(".highlight-rect").forEach((node) => node.classList.remove("active"));
   els.highlightPopover?.classList.add("hidden");
 }
 
