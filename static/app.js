@@ -72,6 +72,7 @@ const state = {
   chatMessages: [],
   renderToken: 0,
   analysisPoll: null,
+  figurePoll: null,
   uploadPromise: null,
   pageTexts: new Map(),
   pageWords: new Map(),
@@ -128,12 +129,6 @@ const els = {
   backgroundSection: document.getElementById("background-section"),
   backgroundNotes: document.getElementById("background-notes"),
   takeawaysTab: document.getElementById("takeaways-tab"),
-  notShownSection: document.getElementById("not-shown-section"),
-  notShownList: document.getElementById("not-shown-list"),
-  codeSection: document.getElementById("code-section"),
-  codeList: document.getElementById("code-list"),
-  reviewerSection: document.getElementById("reviewer-section"),
-  reviewerQuestions: document.getElementById("reviewer-questions"),
   chatFigureFocus: document.getElementById("chat-figure-focus"),
   chatMessages: document.getElementById("chat-messages"),
   chatForm: document.getElementById("chat-form"),
@@ -159,6 +154,14 @@ function escapeHtml(value = "") {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function briefText(value = "", maxLength = 240) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength).replace(/\s+\S*$/, "").trim()}...`;
 }
 
 function highlightLabelId(value = "") {
@@ -818,6 +821,8 @@ function renderPaperList() {
           ? "analyzing"
           : paper.analysis_status === "error"
             ? "analysis failed"
+            : paper.figure_analysis_status === "running"
+              ? `${paper.highlight_count || 0} highlights · figures running${citationText}`
             : `${paper.highlight_count || 0} highlights${citationText} · ${escapeHtml(paper.provider_used || "unknown")}`;
       return `
         <article class="paper-card ${active}">
@@ -858,6 +863,7 @@ function paperSummary(paper) {
     analysis_error: paper.analysis_error || "",
     highlight_count: paper.highlight_count ?? paper.highlights?.length ?? 0,
     figure_count: paper.figure_count ?? paper.figures?.length ?? 0,
+    figure_analysis_status: paper.figure_analysis_status || "idle",
     citation_count: paper.citation_count ?? paper.citations?.length ?? 0,
   };
 }
@@ -897,6 +903,9 @@ async function selectPaper(paperId) {
   setSelectedPaper(paper);
   await renderPdf(paper);
   pollPaperAnalysis(paper.id);
+  if (paper.figure_analysis_status === "running") {
+    pollFigureAnalysis(paper.id);
+  }
 }
 
 async function removePaper(paperId) {
@@ -953,6 +962,11 @@ function clearSelectedPaper() {
     window.clearTimeout(state.analysisPoll);
     state.analysisPoll = null;
   }
+  if (state.figurePoll) {
+    window.clearTimeout(state.figurePoll);
+    state.figurePoll = null;
+  }
+  state.figureAnalysisRunning = false;
   syncPaperActions();
   els.readerEmpty?.classList.remove("hidden");
   els.pdfViewer?.classList.add("hidden");
@@ -967,9 +981,6 @@ function clearSelectedPaper() {
     els.paperOverview.textContent = "";
   }
   renderBackgroundNotes([]);
-  renderOptionalSummaryList(els.notShownSection, els.notShownList, []);
-  renderOptionalSummaryList(els.codeSection, els.codeList, []);
-  renderOptionalSummaryList(els.reviewerSection, els.reviewerQuestions, []);
   syncPdfZoomControls();
   if (els.highlightCount) {
     els.highlightCount.textContent = "0";
@@ -983,8 +994,9 @@ function clearSelectedPaper() {
 
 function syncPaperActions() {
   const isAnalyzing = state.selectedPaper?.analysis_status === "analyzing";
-  const isBusy = isAnalyzing || state.figureAnalysisRunning;
-  const buttonLabel = state.figureAnalysisRunning
+  const isFigureAnalyzing = state.figureAnalysisRunning || state.selectedPaper?.figure_analysis_status === "running";
+  const isBusy = isAnalyzing || isFigureAnalyzing;
+  const buttonLabel = isFigureAnalyzing
     ? "Analyzing figures"
     : isAnalyzing
       ? "Analyzing text"
@@ -1014,9 +1026,6 @@ function renderPaperDetails(paper) {
     els.paperOverview.textContent = paper.overview || "";
   }
   renderBackgroundNotes(paper.background_notes || []);
-  renderOptionalSummaryList(els.notShownSection, els.notShownList, paper.not_shown || [], true);
-  renderOptionalSummaryList(els.codeSection, els.codeList, paper.code_availability || [], true);
-  renderOptionalSummaryList(els.reviewerSection, els.reviewerQuestions, paper.reviewer_questions || [], true);
   const highlights = paper.highlights || [];
   if (
     state.activeHighlightFacet !== "all"
@@ -1037,7 +1046,15 @@ function renderPaperDetails(paper) {
   } else if (paper.analysis_status === "error") {
     renderListPanel(els.takeawaysTab, [paper.analysis_error || "Analysis failed."]);
   } else {
-    renderListPanel(els.takeawaysTab, paper.key_takeaways || [], { linkEvidence: true });
+    renderListPanel(els.takeawaysTab, paper.key_takeaways || [], {
+      linkEvidence: true,
+      rowEvidence: true,
+      allowFigure: false,
+      showEvidence: true,
+      showHighlightLinks: true,
+      maxTokens: 180,
+      flash: true,
+    });
   }
   renderHighlightFilters(highlights);
   renderHighlights(visibleHighlights);
@@ -1126,7 +1143,21 @@ function summaryItemEvidenceHint(item) {
   if (!item || typeof item !== "object") {
     return "";
   }
-  return String(item.evidence_hint || item.evidence || item.evidence_snippet || "").trim();
+  return String(item.supporting_excerpt || item.evidence_hint || item.evidence || item.evidence_snippet || "").trim();
+}
+
+function summaryItemHighlightIds(item) {
+  if (!item || typeof item !== "object") {
+    return [];
+  }
+  const rawIds = item.highlight_ids || item.highlightIds || [];
+  if (typeof rawIds === "string") {
+    return rawIds.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(rawIds)) {
+    return [];
+  }
+  return rawIds.map((value) => String(value || "").trim()).filter(Boolean);
 }
 
 function normalizedEvidenceValue(value) {
@@ -1141,6 +1172,212 @@ function normalizedEvidenceValue(value) {
 
 function evidenceTokens(value, limit = 28) {
   return normalizedEvidenceValue(value).split(" ").filter(Boolean).slice(0, limit);
+}
+
+function wordEvidenceTokens(word) {
+  return normalizedEvidenceValue(word?.text || "").split(" ").filter(Boolean);
+}
+
+function evidenceWordEntries(words) {
+  return (words || []).map((word, index) => ({ word, index }));
+}
+
+function evidenceTokenEntries(wordEntries) {
+  return wordEntries.flatMap((entry) =>
+    wordEvidenceTokens(entry.word).map((token) => ({ ...entry, token })),
+  );
+}
+
+function uniqueWordsFromEntries(entries) {
+  const seen = new Set();
+  const result = [];
+  for (const entry of entries) {
+    if (seen.has(entry.index)) {
+      continue;
+    }
+    seen.add(entry.index);
+    result.push(entry.word);
+  }
+  return result;
+}
+
+function matchedTokenSpan(tokenEntries, queryTokens) {
+  if (!tokenEntries.length || !queryTokens.length) {
+    return null;
+  }
+
+  for (let start = 0; start < tokenEntries.length; start += 1) {
+    let cursor = start;
+    let matched = true;
+    for (const queryToken of queryTokens) {
+      let combined = "";
+      while (cursor < tokenEntries.length && combined.length < queryToken.length) {
+        const next = combined + tokenEntries[cursor].token;
+        if (!queryToken.startsWith(next)) {
+          matched = false;
+          break;
+        }
+        combined = next;
+        cursor += 1;
+        if (combined === queryToken) {
+          break;
+        }
+      }
+      if (!matched || combined !== queryToken) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
+      return { start, end: cursor };
+    }
+  }
+  return null;
+}
+
+function wordLineGroups(wordEntries) {
+  const lines = [];
+  const sortedEntries = [...wordEntries].sort((left, right) => {
+    const leftCenter = (left.word.cssRect[1] + left.word.cssRect[3]) / 2;
+    const rightCenter = (right.word.cssRect[1] + right.word.cssRect[3]) / 2;
+    return leftCenter - rightCenter || left.word.cssRect[0] - right.word.cssRect[0];
+  });
+
+  for (const entry of sortedEntries) {
+    const centerY = (entry.word.cssRect[1] + entry.word.cssRect[3]) / 2;
+    const line = lines.find((item) => Math.abs(item.centerY - centerY) <= 5);
+    if (line) {
+      line.entries.push(entry);
+      line.centerY = (line.centerY * (line.entries.length - 1) + centerY) / line.entries.length;
+      line.top = Math.min(line.top, entry.word.cssRect[1]);
+      line.bottom = Math.max(line.bottom, entry.word.cssRect[3]);
+    } else {
+      lines.push({
+        centerY,
+        top: entry.word.cssRect[1],
+        bottom: entry.word.cssRect[3],
+        entries: [entry],
+      });
+    }
+  }
+
+  return lines.sort((left, right) => left.top - right.top);
+}
+
+function sentenceBoundaryAfter(wordEntries, index) {
+  const text = String(wordEntries[index]?.word?.text || "").trim();
+  if (!/[.!?][)"'\]]*$/.test(text)) {
+    return false;
+  }
+
+  const token = normalizedEvidenceValue(text);
+  if (["al", "dr", "eg", "fig", "figure", "ie", "mr", "mrs", "ms", "ref", "refs", "vs"].includes(token)) {
+    return false;
+  }
+
+  const nextText = String(wordEntries[index + 1]?.word?.text || "").trim();
+  return !nextText || /^[(\[]?[A-Z0-9]/.test(nextText);
+}
+
+function sentenceWordsForMatch(wordEntries, startIndex, endIndex) {
+  const maxSentenceWords = 90;
+  let first = startIndex;
+  let last = endIndex;
+
+  while (first > 0 && !sentenceBoundaryAfter(wordEntries, first - 1)) {
+    first -= 1;
+  }
+  while (last < wordEntries.length && !sentenceBoundaryAfter(wordEntries, last - 1)) {
+    last += 1;
+  }
+
+  if (last - first > maxSentenceWords) {
+    return wordEntries.slice(startIndex, endIndex).map((entry) => entry.word);
+  }
+  return wordEntries.slice(first, last).map((entry) => entry.word);
+}
+
+function sentenceBlocksForWordEntries(wordEntries) {
+  const maxSentenceWords = 90;
+  const blocks = [];
+  let current = [];
+
+  wordEntries.forEach((entry, index) => {
+    current.push(entry);
+    if (sentenceBoundaryAfter(wordEntries, index) || current.length >= maxSentenceWords) {
+      blocks.push(current);
+      current = [];
+    }
+  });
+  if (current.length) {
+    blocks.push(current);
+  }
+  return blocks;
+}
+
+function paragraphWordsForMatch(wordEntries, startIndex, endIndex) {
+  const matchedIndexes = new Set(wordEntries.slice(startIndex, endIndex).map((entry) => entry.index));
+  const lines = wordLineGroups(wordEntries);
+  const matchedLineIndexes = lines
+    .map((line, index) => (line.entries.some((entry) => matchedIndexes.has(entry.index)) ? index : null))
+    .filter((index) => index !== null);
+  if (!matchedLineIndexes.length) {
+    return wordEntries.slice(startIndex, endIndex).map((entry) => entry.word);
+  }
+
+  const lineHeights = lines.map((line) => Math.max(1, line.bottom - line.top)).sort((left, right) => left - right);
+  const medianLineHeight = lineHeights[Math.floor(lineHeights.length / 2)] || 10;
+  const maxParagraphGap = Math.max(5, medianLineHeight * 0.75);
+  const maxParagraphLines = 8;
+  let firstLine = Math.min(...matchedLineIndexes);
+  let lastLine = Math.max(...matchedLineIndexes);
+
+  while (
+    firstLine > 0
+    && lastLine - firstLine + 1 < maxParagraphLines
+    && lines[firstLine].top - lines[firstLine - 1].bottom <= maxParagraphGap
+  ) {
+    firstLine -= 1;
+  }
+  while (
+    lastLine < lines.length - 1
+    && lastLine - firstLine + 1 < maxParagraphLines
+    && lines[lastLine + 1].top - lines[lastLine].bottom <= maxParagraphGap
+  ) {
+    lastLine += 1;
+  }
+
+  return lines
+    .slice(firstLine, lastLine + 1)
+    .flatMap((line) => line.entries)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.word);
+}
+
+function paragraphBlocksForWordEntries(wordEntries) {
+  const lines = wordLineGroups(wordEntries);
+  if (!lines.length) {
+    return [];
+  }
+
+  const lineHeights = lines.map((line) => Math.max(1, line.bottom - line.top)).sort((left, right) => left - right);
+  const medianLineHeight = lineHeights[Math.floor(lineHeights.length / 2)] || 10;
+  const maxParagraphGap = Math.max(5, medianLineHeight * 0.75);
+  const blocks = [];
+  let currentLines = [lines[0]];
+
+  for (const line of lines.slice(1)) {
+    const previousLine = currentLines[currentLines.length - 1];
+    if (line.top - previousLine.bottom > maxParagraphGap) {
+      blocks.push(currentLines);
+      currentLines = [line];
+    } else {
+      currentLines.push(line);
+    }
+  }
+  blocks.push(currentLines);
+
+  return blocks.map((block) => block.flatMap((line) => line.entries).sort((left, right) => left.index - right.index));
 }
 
 const SUMMARY_STOP_WORDS = new Set([
@@ -1216,6 +1453,32 @@ function evidenceHighlightIndexForItem(item) {
   return bestScore >= 0.18 ? bestIndex : null;
 }
 
+function highlightIndexForId(highlightId) {
+  const normalizedId = String(highlightId || "").trim();
+  if (!normalizedId) {
+    return null;
+  }
+  const index = (state.selectedPaper?.highlights || []).findIndex((highlight) => highlight.id === normalizedId);
+  return index === -1 ? null : index;
+}
+
+function linkedHighlightIndexesForItem(item, options = {}) {
+  const indexes = [];
+  for (const highlightId of summaryItemHighlightIds(item)) {
+    const index = highlightIndexForId(highlightId);
+    if (index !== null && !indexes.includes(index)) {
+      indexes.push(index);
+    }
+  }
+  if (!indexes.length && options.includeFallback !== false) {
+    const fallbackIndex = evidenceHighlightIndexForItem(item);
+    if (fallbackIndex !== null) {
+      indexes.push(fallbackIndex);
+    }
+  }
+  return indexes;
+}
+
 function figureReferenceKeys(value) {
   const references = [];
   const pattern = /\b(?:fig(?:ure)?\.?|table)\s*([0-9]+[a-z]?)\b/gi;
@@ -1248,29 +1511,118 @@ function figureEvidenceTargetForItem(item) {
   return { type: "figure", figureId: figure.id, label: kind };
 }
 
-function textEvidenceTargetForValue(value) {
-  const tokens = evidenceTokens(value);
+function fuzzyParagraphEvidenceTarget(tokens, options = {}) {
+  const queryTokens = tokens.filter((token) => !SUMMARY_STOP_WORDS.has(token));
+  if (queryTokens.length < 4) {
+    return null;
+  }
+
+  let bestTarget = null;
+  let bestScore = 0;
+  for (const [pageNumber, words] of currentPageWords().entries()) {
+    const wordEntries = words
+      .map((word, index) => ({ word, index, token: normalizedEvidenceValue(word.text) }))
+      .filter((item) => item.token);
+    for (const block of paragraphBlocksForWordEntries(wordEntries)) {
+      const blockTokens = new Set(block.map((entry) => entry.token).filter((token) => !SUMMARY_STOP_WORDS.has(token)));
+      let shared = 0;
+      for (const token of queryTokens) {
+        if (blockTokens.has(token)) {
+          shared += 1;
+        }
+      }
+      const score = shared / queryTokens.length;
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = {
+          type: "text",
+          label: "Text",
+          pageNumber,
+          rects: mergeWordRects(block.map((entry) => entry.word), "pdfRect"),
+          flash: Boolean(options.flash),
+        };
+      }
+    }
+  }
+
+  return bestScore >= 0.32 ? bestTarget : null;
+}
+
+function fuzzySentenceEvidenceTarget(tokens, options = {}) {
+  const queryTokens = tokens.filter((token) => !SUMMARY_STOP_WORDS.has(token));
+  if (queryTokens.length < 4) {
+    return null;
+  }
+
+  let bestTarget = null;
+  let bestScore = 0;
+  for (const [pageNumber, words] of currentPageWords().entries()) {
+    const wordEntries = evidenceWordEntries(words);
+    for (const block of sentenceBlocksForWordEntries(wordEntries)) {
+      const blockTokens = new Set(
+        block
+          .flatMap((entry) => wordEvidenceTokens(entry.word))
+          .filter((token) => !SUMMARY_STOP_WORDS.has(token)),
+      );
+      let shared = 0;
+      for (const token of queryTokens) {
+        if (blockTokens.has(token)) {
+          shared += 1;
+        }
+      }
+      const score = shared / queryTokens.length;
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = {
+          type: "text",
+          label: "Text",
+          pageNumber,
+          rects: mergeWordRects(block.map((entry) => entry.word), "pdfRect"),
+          flash: Boolean(options.flash),
+        };
+      }
+    }
+  }
+
+  return bestScore >= 0.38 ? bestTarget : null;
+}
+
+function textEvidenceTargetForValue(value, options = {}) {
+  const tokens = evidenceTokens(value, options.maxTokens || 80);
   if (tokens.length < 4) {
     return null;
   }
 
-  for (const [pageNumber, words] of state.pageWords.entries()) {
-    const normalizedWords = words
-      .map((word) => ({ word, token: normalizedEvidenceValue(word.text) }))
-      .filter((item) => item.token);
-    const wordTokens = normalizedWords.map((item) => item.token);
-    for (let index = 0; index <= wordTokens.length - tokens.length; index += 1) {
-      const matches = tokens.every((token, offset) => wordTokens[index + offset] === token);
-      if (!matches) {
-        continue;
-      }
-      const matchedWords = normalizedWords.slice(index, index + tokens.length).map((item) => item.word);
+  for (const [pageNumber, words] of currentPageWords().entries()) {
+    const wordEntries = evidenceWordEntries(words);
+    const tokenEntries = evidenceTokenEntries(wordEntries);
+    const span = matchedTokenSpan(tokenEntries, tokens);
+    if (span) {
+      const matchedTokenEntries = tokenEntries.slice(span.start, span.end);
+      const matchedWordIndexes = matchedTokenEntries.map((entry) => entry.index);
+      const firstWordIndex = Math.min(...matchedWordIndexes);
+      const lastWordIndex = Math.max(...matchedWordIndexes) + 1;
+      const matchedEntries = options.expandToParagraph
+        ? paragraphWordsForMatch(wordEntries, firstWordIndex, lastWordIndex)
+        : options.expandToSentence
+          ? sentenceWordsForMatch(wordEntries, firstWordIndex, lastWordIndex)
+          : uniqueWordsFromEntries(matchedTokenEntries);
       return {
         type: "text",
         label: "Text",
         pageNumber,
-        rects: mergeWordRects(matchedWords, "pdfRect"),
+        rects: mergeWordRects(matchedEntries, "pdfRect"),
+        flash: Boolean(options.flash),
       };
+    }
+  }
+
+  if (options.expandToSentence || options.expandToParagraph) {
+    const fuzzyTarget = options.expandToSentence
+      ? fuzzySentenceEvidenceTarget(tokens, options)
+      : fuzzyParagraphEvidenceTarget(tokens, options);
+    if (fuzzyTarget) {
+      return fuzzyTarget;
     }
   }
 
@@ -1286,23 +1638,24 @@ function textEvidenceTargetForValue(value) {
   return null;
 }
 
-function textEvidenceTargetForItem(item) {
+function textEvidenceTargetForItem(item, options = {}) {
   const evidenceHint = summaryItemEvidenceHint(item);
-  return textEvidenceTargetForValue(evidenceHint) || textEvidenceTargetForValue(summaryItemText(item));
+  return textEvidenceTargetForValue(evidenceHint, options)
+    || textEvidenceTargetForValue(summaryItemText(item), { ...options, maxTokens: 36 });
 }
 
-function summaryEvidenceTargetForItem(item) {
-  const figureTarget = figureEvidenceTargetForItem(item);
+function summaryEvidenceTargetForItem(item, options = {}) {
+  const figureTarget = options.allowFigure === false ? null : figureEvidenceTargetForItem(item);
   if (figureTarget) {
     return figureTarget;
   }
 
-  const textTarget = textEvidenceTargetForItem(item);
+  const textTarget = textEvidenceTargetForItem(item, options);
   if (textTarget) {
     return textTarget;
   }
 
-  const highlightIndex = evidenceHighlightIndexForItem(item);
+  const highlightIndex = linkedHighlightIndexesForItem(item)[0] ?? null;
   return highlightIndex === null ? null : { type: "highlight", label: "Text", highlightIndex };
 }
 
@@ -1312,12 +1665,36 @@ function renderListPanel(target, items, options = {}) {
   setHtml(
     target,
       values.length
-      ? `<ul>${values.map((item) => {
+      ? `<ul>${values.map((item, index) => {
         const text = summaryItemText(item);
-        const target = options.linkEvidence ? summaryEvidenceTargetForItem(item) : null;
+        const target = options.linkEvidence ? summaryEvidenceTargetForItem(item, options) : null;
         const targetIndex = target ? state.summaryEvidenceTargets.length + evidenceTargets.length : null;
         if (target) {
           evidenceTargets.push(target);
+        }
+        if (options.rowEvidence) {
+          const localTargetIndex = target ? evidenceTargets.length - 1 : null;
+          const evidenceHint = summaryItemEvidenceHint(item);
+          const evidenceHtml = options.showEvidence && evidenceHint
+            ? `<blockquote class="takeaway-evidence">${escapeHtml(evidenceHint)}</blockquote>`
+            : "";
+          const linkedHighlights = options.showHighlightLinks
+            ? linkedHighlightIndexesForItem(item).map((highlightIndex) => {
+              const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
+              if (!highlight) {
+                return "";
+              }
+              const labelId = highlightLabelId(highlight.label);
+              return `<button class="summary-highlight-chip label label-${escapeHtml(labelId)}" data-summary-highlight-index="${highlightIndex}"${customHighlightStyle(highlight)} type="button">${escapeHtml(highlightLabelText(highlight.label))}</button>`;
+            }).filter(Boolean).join("")
+            : "";
+          const highlightLinksHtml = linkedHighlights
+            ? `<div class="takeaway-highlight-links">${linkedHighlights}</div>`
+            : "";
+          const attrs = target === null
+            ? ""
+            : ` class="summary-evidence-row" data-summary-evidence-index="${targetIndex}" data-summary-local-evidence-index="${localTargetIndex}" data-summary-row-index="${index}" data-summary-item-text="${escapeHtml(text)}" data-summary-item-evidence="${escapeHtml(evidenceHint)}" role="button" tabindex="0"`;
+          return `<li${attrs}><span>${escapeHtml(text)}</span>${evidenceHtml}${highlightLinksHtml}</li>`;
         }
         const evidenceButton = target === null
           ? ""
@@ -1327,8 +1704,45 @@ function renderListPanel(target, items, options = {}) {
       : `<div class="muted-box">No items</div>`,
   );
   state.summaryEvidenceTargets.push(...evidenceTargets);
+  target?.querySelectorAll("[data-summary-highlight-index]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      jumpToHighlight(Number(button.dataset.summaryHighlightIndex));
+    });
+  });
   target?.querySelectorAll("[data-summary-evidence-index]").forEach((button) => {
-    button.addEventListener("click", () => jumpToSummaryEvidence(Number(button.dataset.summaryEvidenceIndex)));
+    const localIndex = button.dataset.summaryLocalEvidenceIndex;
+    const localTarget = localIndex === undefined ? null : evidenceTargets[Number(localIndex)];
+    const rowIndex = button.dataset.summaryRowIndex;
+    const jump = () => {
+      if (rowIndex !== undefined) {
+        const rowItemIndex = Number(rowIndex);
+        const currentItem = values[rowItemIndex]
+          || (state.selectedPaper?.key_takeaways || [])[rowItemIndex]
+          || {
+            text: button.dataset.summaryItemText || button.textContent || "",
+            evidence_hint: button.dataset.summaryItemEvidence || "",
+          };
+        const currentTarget = summaryEvidenceTargetForItem(currentItem, options);
+        if (currentTarget) {
+          jumpToEvidenceTarget(currentTarget);
+          return;
+        }
+      }
+      if (localTarget) {
+        jumpToEvidenceTarget(localTarget);
+        return;
+      }
+      jumpToSummaryEvidence(Number(button.dataset.summaryEvidenceIndex));
+    };
+    button.addEventListener("click", jump);
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      jump();
+    });
   });
 }
 
@@ -1337,14 +1751,6 @@ function renderBackgroundNotes(notes) {
   els.backgroundSection?.classList.toggle("hidden", !items.length);
   if (els.backgroundNotes) {
     renderListPanel(els.backgroundNotes, items);
-  }
-}
-
-function renderOptionalSummaryList(section, target, items, linkEvidence = false) {
-  const values = items || [];
-  section?.classList.toggle("hidden", !values.length);
-  if (target) {
-    renderListPanel(target, values, { linkEvidence });
   }
 }
 
@@ -1379,11 +1785,7 @@ function renderHighlights(highlights) {
   els.highlightList?.querySelectorAll("[data-highlight-index]").forEach((button) => {
     button.addEventListener("click", () => {
       const highlightIndex = Number(button.dataset.highlightIndex);
-      const highlight = (state.selectedPaper?.highlights || [])[highlightIndex];
-      selectHighlight(highlightIndex);
-      if (highlight?.page_number) {
-        jumpToPage(highlight.page_number);
-      }
+      jumpToHighlight(highlightIndex);
     });
   });
 }
@@ -1643,7 +2045,7 @@ function jumpToHighlight(highlightIndex) {
   selectHighlight(highlightIndex);
   const rect = els.pdfViewer?.querySelector(`[data-highlight-index="${highlightIndex}"]`);
   if (rect) {
-    rect.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    scrollReaderNodeIntoView(rect);
     return;
   }
   if (highlight.page_number) {
@@ -1651,8 +2053,24 @@ function jumpToHighlight(highlightIndex) {
   }
 }
 
-function jumpToSummaryEvidence(targetIndex) {
-  const target = state.summaryEvidenceTargets[targetIndex];
+function scrollReaderNodeIntoView(node, block = "center") {
+  if (!node || !els.readerPanel) {
+    return;
+  }
+
+  const nodeRect = node.getBoundingClientRect();
+  const panelRect = els.readerPanel.getBoundingClientRect();
+  const top = nodeRect.top - panelRect.top + els.readerPanel.scrollTop;
+  const left = nodeRect.left - panelRect.left + els.readerPanel.scrollLeft;
+  const targetTop = block === "start"
+    ? top
+    : top - (els.readerPanel.clientHeight - nodeRect.height) / 2;
+  const targetLeft = left - (els.readerPanel.clientWidth - nodeRect.width) / 2;
+  els.readerPanel.scrollTop = Math.max(0, targetTop);
+  els.readerPanel.scrollLeft = Math.max(0, targetLeft);
+}
+
+function jumpToEvidenceTarget(target) {
   if (!target) {
     return;
   }
@@ -1667,7 +2085,7 @@ function jumpToSummaryEvidence(targetIndex) {
     const node = Array.from(els.pdfViewer?.querySelectorAll("[data-figure-id]") || [])
       .find((item) => item.dataset.figureId === target.figureId);
     if (node && figure) {
-      node.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      scrollReaderNodeIntoView(node);
       showFigurePopover(figure, node.getBoundingClientRect());
     }
     return;
@@ -1677,10 +2095,10 @@ function jumpToSummaryEvidence(targetIndex) {
     showSelectionPreview({
       pageNumber: target.pageNumber,
       rects: target.rects,
-    });
+    }, { flash: Boolean(target.flash) });
     const firstRect = els.pdfViewer?.querySelector(".selection-preview-rect");
     if (firstRect) {
-      firstRect.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      scrollReaderNodeIntoView(firstRect);
       return;
     }
   }
@@ -1690,13 +2108,17 @@ function jumpToSummaryEvidence(targetIndex) {
   }
 }
 
+function jumpToSummaryEvidence(targetIndex) {
+  jumpToEvidenceTarget(state.summaryEvidenceTargets[targetIndex]);
+}
+
 function jumpToPage(pageNumber) {
   if (!pageNumber) {
     return;
   }
   const page = els.pdfViewer?.querySelector(`[data-page-number="${pageNumber}"]`);
   if (page) {
-    page.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollReaderNodeIntoView(page, "start");
   }
 }
 
@@ -1846,6 +2268,45 @@ async function renderPdfPreservingScroll(paper) {
   const anchor = pdfScrollAnchor();
   await renderPdf(paper, { resetViewport: false });
   restorePdfScrollAnchor(anchor);
+}
+
+function renderPdfFigureOverlays(paper) {
+  const pageNodes = Array.from(els.pdfViewer?.querySelectorAll(".pdf-page[data-page-number]") || []);
+  if (!pageNodes.length) {
+    return false;
+  }
+
+  const readerScrollLeft = els.readerPanel?.scrollLeft || 0;
+  const readerScrollTop = els.readerPanel?.scrollTop || 0;
+  const pageFigures = figuresByPage(paper.figures || []);
+
+  for (const pageNode of pageNodes) {
+    const overlay = pageNode.querySelector(".overlay-layer");
+    if (!overlay) {
+      return false;
+    }
+
+    overlay.querySelectorAll(".figure-rect").forEach((node) => node.remove());
+    const pageNumber = Number(pageNode.dataset.pageNumber);
+    const viewport = {
+      width: pageNode.clientWidth || Number.parseFloat(pageNode.style.width) || 0,
+      height: pageNode.clientHeight || Number.parseFloat(pageNode.style.height) || 0,
+    };
+    renderPageFigures(overlay, pageFigures.get(pageNumber) || [], viewport);
+  }
+
+  if (els.readerPanel) {
+    els.readerPanel.scrollLeft = readerScrollLeft;
+    els.readerPanel.scrollTop = readerScrollTop;
+  }
+  return true;
+}
+
+async function refreshFigureAnnotations(paper) {
+  if (renderPdfFigureOverlays(paper)) {
+    return;
+  }
+  await renderPdfPreservingScroll(paper);
 }
 
 function renderPageHighlights(overlay, highlights, pageSize, viewport) {
@@ -2182,12 +2643,11 @@ function cleanSelectedText(words) {
     .trim();
 }
 
-function collectTextLayerWords(textLayer, pageNumber) {
+function textLayerWords(textLayer, pageNumber) {
   const page = textLayer.closest(".pdf-page");
   const pageSize = pageSizeFor(pageNumber);
   if (!page || !pageSize) {
-    state.pageWords.set(pageNumber, []);
-    return;
+    return [];
   }
 
   const pageRect = page.getBoundingClientRect();
@@ -2228,7 +2688,31 @@ function collectTextLayerWords(textLayer, pageNumber) {
     }
   });
 
-  state.pageWords.set(pageNumber, words);
+  return words;
+}
+
+function collectTextLayerWords(textLayer, pageNumber) {
+  state.pageWords.set(pageNumber, textLayerWords(textLayer, pageNumber));
+}
+
+function currentPageWords() {
+  const pageWords = new Map(state.pageWords);
+  els.pdfViewer?.querySelectorAll(".pdf-page[data-page-number]").forEach((page) => {
+    const pageNumber = Number(page.dataset.pageNumber);
+    if (!pageNumber) {
+      return;
+    }
+    const textLayer = page.querySelector(".text-layer");
+    if (!textLayer) {
+      return;
+    }
+    const words = textLayerWords(textLayer, pageNumber);
+    if (words.length) {
+      state.pageWords.set(pageNumber, words);
+      pageWords.set(pageNumber, words);
+    }
+  });
+  return pageWords;
 }
 
 function distanceToRect(x, y, rect) {
@@ -2315,7 +2799,7 @@ function selectionPreviewRects(selection, page) {
   ]);
 }
 
-function showSelectionPreview(selection) {
+function showSelectionPreview(selection, options = {}) {
   clearSelectionPreview();
   if (!selection?.pageNumber) {
     return;
@@ -2330,7 +2814,7 @@ function showSelectionPreview(selection) {
   for (const rect of selectionPreviewRects(selection, page)) {
     const [x0, y0, x1, y1] = rect;
     const node = document.createElement("div");
-    node.className = "selection-preview-rect";
+    node.className = options.flash ? "selection-preview-rect summary-flash-rect" : "selection-preview-rect";
     node.style.left = `${x0}px`;
     node.style.top = `${y0}px`;
     node.style.width = `${Math.max(4, x1 - x0)}px`;
@@ -2597,14 +3081,23 @@ function hideSelectionPopover() {
 }
 
 function renderHighlightPopover(highlight) {
+  const explanation = briefText(highlight?.comment || highlight?.reason || highlight?.snippet || "");
+  const page = highlight?.page_number ? `p. ${highlight.page_number}` : "unplaced";
   setHtml(
     els.highlightPopover,
     `
-      <div class="highlight-popover-label">
-        <span class="label label-${escapeHtml(highlightLabelId(highlight?.label))}"${customHighlightStyle(highlight)}>${escapeHtml(highlightLabelText(highlight?.label))}</span>
+      <div class="highlight-popover-copy">
+        <div class="highlight-popover-heading">
+          <span class="label label-${escapeHtml(highlightLabelId(highlight?.label))}"${customHighlightStyle(highlight)}>${escapeHtml(highlightLabelText(highlight?.label))}</span>
+          <span>${escapeHtml(page)}</span>
+          <button class="highlight-popover-close" data-close-highlight type="button" aria-label="Close">×</button>
+        </div>
+        <p>${escapeHtml(explanation || "No explanation available yet.")}</p>
       </div>
-      <button data-explain-highlight type="button">Explain</button>
-      <button data-remove-highlight type="button">Remove</button>
+      <div class="popover-actions">
+        <button data-explain-highlight type="button">Explain in chat</button>
+        <button data-remove-highlight type="button">Remove</button>
+      </div>
     `,
   );
 }
@@ -2800,6 +3293,21 @@ function applySelectedPaperUpdate(paper) {
   renderPaperDetails(paper);
 }
 
+function selectedPaperWithFigurePayload(payload) {
+  const figures = payload.figures || [];
+  return {
+    ...state.selectedPaper,
+    figures,
+    figure_warnings: payload.warnings || [],
+    figure_provider_used: payload.provider_used || "unknown",
+    figure_analysis_status: payload.status || "idle",
+    figure_analysis_error: payload.error || "",
+    figure_analysis_completed_pages: payload.completed_pages || 0,
+    figure_analysis_total_pages: payload.total_pages || 0,
+    figure_count: figures.length,
+  };
+}
+
 async function saveHighlights(highlights, message) {
   if (!state.selectedPaper) {
     return;
@@ -2950,7 +3458,7 @@ async function explainActiveHighlight() {
   );
 }
 
-async function sendChatMessage(content, forceWeb = false, citationContext = null) {
+async function sendChatMessage(content, forceWeb = false, citationContext = null, options = {}) {
   if (!state.selectedPaper) {
     showToast("Select a paper first");
     return;
@@ -2967,6 +3475,9 @@ async function sendChatMessage(content, forceWeb = false, citationContext = null
     return;
   }
 
+  if (options.resetHistory) {
+    state.chatMessages = [];
+  }
   state.chatMessages.push({ role: "user", content });
   renderChat();
   if (els.chatInput) {
@@ -3016,44 +3527,109 @@ async function analyzeFiguresInReader(force = false) {
   syncPaperActions();
   showToast("Analyzing figures and tables", true);
 
+  let payload;
   try {
-    const payload = await requestJson(`/api/papers/${paperId}/figures/analyze`, {
+    payload = await requestJson(`/api/papers/${paperId}/figures/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         provider: selectedProvider(),
         api_key: requestApiKey() || null,
         force,
+        background: true,
         ...visionModelRequestOptions(),
       }),
     });
-    if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
-      hideToast();
-      return;
-    }
-
-    const figures = payload.figures || [];
-    const paper = {
-      ...state.selectedPaper,
-      figures,
-      figure_warnings: payload.warnings || [],
-      figure_provider_used: payload.provider_used || "unknown",
-      figure_count: figures.length,
-    };
-    applySelectedPaperUpdate(paper);
-    syncSelectedFigures();
-    renderChatFigureFocus();
-    await renderPdfPreservingScroll(paper);
-    hideToast();
-    showToast(
-      figures.length
-        ? `${figures.length} figure/table annotation${figures.length === 1 ? "" : "s"} ready`
-        : "No figures or tables found",
-    );
-  } finally {
+  } catch (error) {
     state.figureAnalysisRunning = false;
     syncPaperActions();
+    throw error;
   }
+  if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
+    hideToast();
+    return;
+  }
+
+  const paper = selectedPaperWithFigurePayload(payload);
+  applySelectedPaperUpdate(paper);
+  syncSelectedFigures();
+  renderChatFigureFocus();
+  await refreshFigureAnnotations(paper);
+  if (payload.status === "running") {
+    pollFigureAnalysis(paperId);
+    return;
+  }
+
+  hideToast();
+  showToast(
+    paper.figures.length
+      ? `${paper.figures.length} figure/table annotation${paper.figures.length === 1 ? "" : "s"} ready`
+      : "No figures or tables found",
+  );
+  state.figureAnalysisRunning = false;
+  syncPaperActions();
+}
+
+function pollFigureAnalysis(paperId) {
+  if (state.figurePoll) {
+    window.clearTimeout(state.figurePoll);
+  }
+  if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
+    state.figureAnalysisRunning = false;
+    syncPaperActions();
+    state.figurePoll = null;
+    return;
+  }
+
+  state.figureAnalysisRunning = true;
+  syncPaperActions();
+  state.figurePoll = window.setTimeout(async () => {
+    try {
+      const payload = await requestJson(`/api/papers/${paperId}/figures`);
+      if (!state.selectedPaper || state.selectedPaper.id !== paperId) {
+        return;
+      }
+
+      const previousFigureCount = state.selectedPaper.figures?.length || 0;
+      const paper = selectedPaperWithFigurePayload(payload);
+      applySelectedPaperUpdate(paper);
+      syncSelectedFigures();
+      renderChatFigureFocus();
+      if ((paper.figures?.length || 0) !== previousFigureCount) {
+        await refreshFigureAnnotations(paper);
+      }
+
+      if (payload.status === "running") {
+        showToast(
+          `Analyzing figures and tables ${payload.completed_pages || 0}/${payload.total_pages || "?"}`,
+          true,
+        );
+        pollFigureAnalysis(paperId);
+        return;
+      }
+
+      state.figureAnalysisRunning = false;
+      state.figurePoll = null;
+      syncPaperActions();
+      hideToast();
+      if (payload.status === "error") {
+        showToast(payload.error || "Figure analysis failed");
+      } else {
+        const count = paper.figures?.length || 0;
+        showToast(
+          count
+            ? `${count} figure/table annotation${count === 1 ? "" : "s"} ready`
+            : "No figures or tables found",
+        );
+      }
+    } catch (error) {
+      state.figureAnalysisRunning = false;
+      state.figurePoll = null;
+      syncPaperActions();
+      hideToast();
+      showToast(error.message || String(error));
+    }
+  }, 1200);
 }
 
 els.uploadForm?.addEventListener("submit", (event) => {
@@ -3174,11 +3750,16 @@ window.addEventListener("pointermove", moveFigurePopover);
 window.addEventListener("pointerup", finishFigurePopoverDrag);
 
 els.highlightPopover?.addEventListener("click", (event) => {
+  if (event.target.closest?.("[data-close-highlight]")) {
+    hideHighlightPopover();
+    return;
+  }
   if (event.target.closest?.("[data-explain-highlight]")) {
     explainActiveHighlight().catch((error) => {
       state.chatMessages.push({ role: "assistant", content: error.message || String(error) });
       renderChat();
     });
+    return;
   }
   if (event.target.closest?.("[data-remove-highlight]")) {
     removeActiveHighlight().catch((error) => showToast(error.message || String(error)));
@@ -3238,7 +3819,8 @@ els.chatForm?.addEventListener("submit", (event) => {
   if (!content) {
     return;
   }
-  sendChatMessage(content, false, state.pendingCitationContext).catch((error) => {
+  const resetHistory = event.submitter?.dataset?.chatAction === "reset-send";
+  sendChatMessage(content, false, state.pendingCitationContext, { resetHistory }).catch((error) => {
     state.chatMessages.push({ role: "assistant", content: error.message || String(error) });
     renderChat();
   });
