@@ -1,3 +1,5 @@
+const MODEL_SETTINGS_KEY = "papersprint.modelSettings";
+
 const state = {
   paperId: document.body.dataset.paperId,
   paper: null,
@@ -15,6 +17,12 @@ const els = {
   status: document.getElementById("figures-status"),
   statusPill: document.getElementById("figures-status-pill"),
   provider: document.getElementById("figures-provider"),
+  providerSelect: document.getElementById("provider-select"),
+  apiKeyInput: document.getElementById("api-key-input"),
+  textModelInput: document.getElementById("text-model-input"),
+  textEffortSelect: document.getElementById("text-effort-select"),
+  visionModelInput: document.getElementById("vision-model-input"),
+  visionEffortSelect: document.getElementById("vision-effort-select"),
   warnings: document.getElementById("figure-warnings"),
   list: document.getElementById("figures-list"),
   reanalyzeButton: document.getElementById("reanalyze-figures-button"),
@@ -78,6 +86,116 @@ function setStatus(message, pill = "Figures") {
   if (els.statusPill) {
     els.statusPill.textContent = pill;
   }
+}
+
+function storedModelSettings() {
+  try {
+    return JSON.parse(window.localStorage.getItem(MODEL_SETTINGS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function selectedTextModel() {
+  return els.textModelInput?.value.trim() || "gpt-5.5";
+}
+
+function selectedProvider() {
+  return els.providerSelect?.value || "auto";
+}
+
+function requestApiKey() {
+  return selectedProvider() === "openai" ? els.apiKeyInput?.value.trim() || "" : "";
+}
+
+function syncApiKeyInput() {
+  els.apiKeyInput?.classList.toggle("hidden", selectedProvider() !== "openai");
+}
+
+function requireOpenAiKey() {
+  if (selectedProvider() !== "openai" || requestApiKey()) {
+    return true;
+  }
+  showToast("Enter an OpenAI API key");
+  els.apiKeyInput?.focus();
+  return false;
+}
+
+function selectedVisionModel() {
+  return els.visionModelInput?.value.trim() || selectedTextModel();
+}
+
+function selectedTextEffort() {
+  return els.textEffortSelect?.value || "high";
+}
+
+function selectedVisionEffort() {
+  return els.visionEffortSelect?.value || selectedTextEffort();
+}
+
+function saveModelSettings() {
+  window.localStorage.setItem(
+    MODEL_SETTINGS_KEY,
+    JSON.stringify({
+      textModel: selectedTextModel(),
+      textEffort: selectedTextEffort(),
+      visionModel: selectedVisionModel(),
+      visionEffort: selectedVisionEffort(),
+    }),
+  );
+}
+
+function populateEffortSelect(select, efforts, selected, prefix) {
+  if (!select) {
+    return;
+  }
+  setHtml(
+    select,
+    efforts.map((effort) => {
+      const isSelected = effort === selected ? " selected" : "";
+      return `<option value="${escapeHtml(effort)}"${isSelected}>${escapeHtml(prefix)}: ${escapeHtml(effort)}</option>`;
+    }).join(""),
+  );
+}
+
+async function loadSettings() {
+  const settings = await requestJson("/api/settings");
+  if (settings.default_provider && els.providerSelect) {
+    els.providerSelect.value = settings.default_provider;
+  }
+  syncApiKeyInput();
+  const stored = storedModelSettings();
+  const efforts = settings.reasoning_efforts?.length
+    ? settings.reasoning_efforts
+    : ["none", "low", "medium", "high", "xhigh"];
+  const textEffort = stored.textEffort || settings.default_reasoning_effort || "high";
+  const visionEffort = stored.visionEffort || settings.default_vision_reasoning_effort || textEffort;
+  if (els.textModelInput) {
+    els.textModelInput.value = stored.textModel || settings.default_text_model || "gpt-5.5";
+    els.textModelInput.placeholder = "Text model";
+    els.textModelInput.title = "Text model";
+  }
+  if (els.visionModelInput) {
+    els.visionModelInput.value = stored.visionModel || settings.default_vision_model || selectedTextModel();
+    els.visionModelInput.placeholder = "Vision model";
+    els.visionModelInput.title = "Vision model";
+  }
+  populateEffortSelect(els.textEffortSelect, efforts, textEffort, "Text");
+  populateEffortSelect(els.visionEffortSelect, efforts, visionEffort, "Vision");
+}
+
+function textModelRequestOptions() {
+  return {
+    model: selectedTextModel(),
+    reasoning_effort: selectedTextEffort(),
+  };
+}
+
+function visionModelRequestOptions() {
+  return {
+    model: selectedVisionModel(),
+    reasoning_effort: selectedVisionEffort(),
+  };
 }
 
 function setLoadingButton(button, isLoading, label) {
@@ -286,17 +404,25 @@ async function loadFigures() {
 }
 
 async function analyzeFigures(force = false) {
+  if (!requireOpenAiKey()) {
+    return;
+  }
   state.running = true;
   syncButton();
-  showToast("Analyzing figures with Codex", true);
-  setStatus("Converting PDF pages to JPEG and analyzing with Codex.", "Codex");
+  showToast("Analyzing figures", true);
+  setStatus("Converting candidate PDF pages to JPEG and analyzing figures.", "Figures");
   setHtml(els.list, `<div class="loading">Analyzing figures</div>`);
 
   try {
     const payload = await requestJson(`/api/papers/${state.paperId}/figures/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: "codex", force }),
+      body: JSON.stringify({
+        provider: selectedProvider(),
+        api_key: requestApiKey() || null,
+        force,
+        ...visionModelRequestOptions(),
+      }),
     });
     state.figures = payload.figures || [];
     syncSelectedFigures();
@@ -397,6 +523,9 @@ async function sendChatMessage(content) {
   if (!state.paperId || state.chatRunning) {
     return;
   }
+  if (!requireOpenAiKey()) {
+    return;
+  }
   state.chatRunning = true;
   state.chatMessages.push({ role: "user", content });
   if (els.chatInput) {
@@ -415,7 +544,10 @@ async function sendChatMessage(content) {
       body: JSON.stringify({
         messages: state.chatMessages.filter((message) => message.content !== "Thinking..."),
         use_web: false,
+        provider: selectedProvider(),
+        api_key: requestApiKey() || null,
         figure_context: selectedFigureContext(),
+        ...textModelRequestOptions(),
       }),
     });
 
@@ -453,6 +585,15 @@ els.chatForm?.addEventListener("submit", (event) => {
 
 els.chatInput?.addEventListener("input", resizeChatInput);
 els.chatInput?.addEventListener("keydown", submitChatOnEnter);
+els.providerSelect?.addEventListener("change", syncApiKeyInput);
+[
+  els.textModelInput,
+  els.textEffortSelect,
+  els.visionModelInput,
+  els.visionEffortSelect,
+].forEach((control) => {
+  control?.addEventListener("change", saveModelSettings);
+});
 
 async function init() {
   if (!state.paperId) {
@@ -461,6 +602,7 @@ async function init() {
     return;
   }
 
+  await loadSettings();
   await loadPaper();
   await loadFigures();
   renderChat();

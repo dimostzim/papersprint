@@ -19,6 +19,9 @@ load_dotenv()
 MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
 ANALYSIS_VERSION = 10
+DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_REASONING_EFFORT = "high"
+REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 
 ANALYSIS_SYSTEM = """You help researchers read scientific papers quickly.
@@ -51,6 +54,17 @@ def provider_status() -> dict[str, Any]:
         default_provider = "auto"
     return {
         "default_provider": default_provider,
+        "default_text_model": resolve_text_model(None),
+        "default_vision_model": resolve_vision_model(None),
+        "default_reasoning_effort": resolve_reasoning_effort(None, "OPENAI_REASONING_EFFORT", "CODEX_REASONING_EFFORT"),
+        "default_vision_reasoning_effort": resolve_reasoning_effort(
+            None,
+            "OPENAI_VISION_REASONING_EFFORT",
+            "CODEX_VISION_REASONING_EFFORT",
+            "OPENAI_REASONING_EFFORT",
+            "CODEX_REASONING_EFFORT",
+        ),
+        "reasoning_efforts": sorted(REASONING_EFFORTS, key=["none", "low", "medium", "high", "xhigh"].index),
         "openai_available": has_openai_key,
         "codex_available": has_codex,
         "providers": [
@@ -59,6 +73,32 @@ def provider_status() -> dict[str, Any]:
             {"id": "openai", "label": "OpenAI API key"},
         ],
     }
+
+
+def resolve_model(value: str | None, *env_names: str) -> str:
+    candidates = [value, *(os.getenv(name) for name in env_names), DEFAULT_MODEL]
+    for candidate in candidates:
+        clean = str(candidate or "").replace('"', "").strip()
+        if clean:
+            return clean[:120]
+    return DEFAULT_MODEL
+
+
+def resolve_text_model(value: str | None) -> str:
+    return resolve_model(value, "OPENAI_MODEL", "CODEX_MODEL")
+
+
+def resolve_vision_model(value: str | None) -> str:
+    return resolve_model(value, "OPENAI_VISION_MODEL", "CODEX_VISION_MODEL", "OPENAI_MODEL", "CODEX_MODEL")
+
+
+def resolve_reasoning_effort(value: str | None, *env_names: str) -> str:
+    candidates = [value, *(os.getenv(name) for name in env_names), DEFAULT_REASONING_EFFORT]
+    for candidate in candidates:
+        clean = str(candidate or "").strip().lower()
+        if clean in REASONING_EFFORTS:
+            return clean
+    return DEFAULT_REASONING_EFFORT
 
 
 def sanitize_prompt_text(value: str) -> str:
@@ -195,28 +235,42 @@ def parse_json_payload(text: str) -> dict[str, Any]:
     return json.loads(cleaned[start : end + 1], strict=False)
 
 
-def run_openai(prompt: str, system_prompt: str, expect_json: bool, api_key: str | None = None) -> str:
+def run_openai(
+    prompt: str,
+    system_prompt: str,
+    expect_json: bool,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
     from openai import OpenAI
 
     client = OpenAI(api_key=openai_api_key(api_key))
     response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        model=resolve_text_model(model),
         input=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
+        reasoning={"effort": resolve_reasoning_effort(reasoning_effort, "OPENAI_REASONING_EFFORT")},
         temperature=0.2,
     )
     return response.output_text
 
 
-def run_openai_vision(prompt: str, image_path: Path, api_key: str | None = None) -> str:
+def run_openai_vision(
+    prompt: str,
+    image_path: Path,
+    api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
     from openai import OpenAI
 
     client = OpenAI(api_key=openai_api_key(api_key))
     image_data = base64.b64encode(image_path.read_bytes()).decode("ascii")
     response = client.responses.create(
-        model=os.getenv("OPENAI_VISION_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini")),
+        model=resolve_vision_model(model),
         input=[
             {"role": "system", "content": FIGURE_SYSTEM},
             {
@@ -227,12 +281,18 @@ def run_openai_vision(prompt: str, image_path: Path, api_key: str | None = None)
                 ],
             },
         ],
+        reasoning={"effort": resolve_reasoning_effort(reasoning_effort, "OPENAI_VISION_REASONING_EFFORT", "OPENAI_REASONING_EFFORT")},
         temperature=0.1,
     )
     return response.output_text
 
 
-def run_codex_vision(prompt: str, image_path: Path) -> str:
+def run_codex_vision(
+    prompt: str,
+    image_path: Path,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
     image_prompt = f"""
 {FIGURE_SYSTEM}
 
@@ -244,10 +304,15 @@ The page image is this local JPEG file:
 Inspect that image directly and return only the requested JSON object.
 """.strip()
     timeout = int(os.getenv("CODEX_FIGURE_TIMEOUT_SECONDS", os.getenv("CODEX_TIMEOUT_SECONDS", "180")))
-    return run_codex(image_prompt, timeout)
+    return run_codex(image_prompt, timeout, resolve_vision_model(model), reasoning_effort)
 
 
-def run_codex(prompt: str, timeout_seconds: int | None = None) -> str:
+def run_codex(
+    prompt: str,
+    timeout_seconds: int | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> str:
     codex_path = shutil.which("codex")
     if not codex_path:
         raise RuntimeError("Codex CLI is not installed or not on PATH.")
@@ -268,14 +333,14 @@ def run_codex(prompt: str, timeout_seconds: int | None = None) -> str:
             "--color",
             "never",
             "-c",
-            'model_reasoning_effort="low"',
+            f"model_reasoning_effort={json.dumps(resolve_reasoning_effort(reasoning_effort, 'CODEX_REASONING_EFFORT', 'OPENAI_REASONING_EFFORT'))}",
             "-o",
             str(output_path),
             prompt,
         ]
-        model = os.getenv("CODEX_MODEL")
-        if model:
-            args[5:5] = ["-m", model]
+        selected_model = resolve_text_model(model)
+        if selected_model:
+            args[5:5] = ["-m", selected_model]
 
         result = subprocess.run(
             args,
@@ -300,14 +365,16 @@ def run_ai(
     provider: str,
     expect_json: bool,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, str]:
     selected = choose_provider(provider, api_key)
     if selected == "openai":
         if not openai_api_key(api_key):
             raise RuntimeError("OPENAI_API_KEY is not set.")
-        return run_openai(prompt, system_prompt, expect_json, api_key), "openai"
+        return run_openai(prompt, system_prompt, expect_json, api_key, model, reasoning_effort), "openai"
     if selected == "codex":
-        return run_codex(f"{system_prompt}\n\n{prompt}"), "codex"
+        return run_codex(f"{system_prompt}\n\n{prompt}", model=model, reasoning_effort=reasoning_effort), "codex"
     raise RuntimeError(f"Unknown AI provider: {provider}")
 
 
@@ -396,6 +463,8 @@ def analyze_paper(
     extracted: ExtractedPaper,
     provider: str | None,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     selected_provider = choose_provider(provider, api_key)
     output, provider_used = run_ai(
@@ -404,6 +473,8 @@ def analyze_paper(
         selected_provider,
         True,
         api_key,
+        model,
+        reasoning_effort,
     )
     analysis = normalize_analysis(parse_json_payload(output), extracted)
 
@@ -451,13 +522,15 @@ def analyze_page_figures(
     image_path: Path,
     provider: str | None,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     selected_provider = choose_vision_provider(provider, api_key)
     prompt = build_figure_prompt(page_number, page_text)
     if selected_provider == "openai":
-        output = run_openai_vision(prompt, image_path, api_key)
+        output = run_openai_vision(prompt, image_path, api_key, model, reasoning_effort)
     elif selected_provider == "codex":
-        output = run_codex_vision(prompt, image_path)
+        output = run_codex_vision(prompt, image_path, model, reasoning_effort)
     else:
         raise RuntimeError(f"Unknown vision provider: {provider}")
     payload = parse_json_payload(output)
@@ -618,10 +691,12 @@ def answer_selection_explanation(
     page_text: str,
     provider: str | None,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     selected_provider = choose_provider(provider, api_key)
     prompt = build_selection_explanation_prompt(paper, selected_text, page_number, page_text)
-    answer, provider_used = run_ai(prompt, SELECTION_EXPLANATION_SYSTEM, selected_provider, False, api_key)
+    answer, provider_used = run_ai(prompt, SELECTION_EXPLANATION_SYSTEM, selected_provider, False, api_key, model, reasoning_effort)
 
     return {
         "answer": answer.strip(),
@@ -638,13 +713,15 @@ def answer_chat(
     citation_context: dict[str, Any] | None = None,
     api_key: str | None = None,
     figure_context: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     last_question = next((item["content"] for item in reversed(messages) if item.get("role") == "user"), "")
     excerpts = select_relevant_excerpts(last_question, paper.get("sentences", []))
     selected_provider = choose_provider(provider, api_key)
 
     prompt = build_chat_prompt(paper, messages, excerpts, web_results, citation_context, figure_context)
-    answer, provider_used = run_ai(prompt, CHAT_SYSTEM, selected_provider, False, api_key)
+    answer, provider_used = run_ai(prompt, CHAT_SYSTEM, selected_provider, False, api_key, model, reasoning_effort)
 
     return {
         "answer": answer.strip(),

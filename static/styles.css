@@ -141,7 +141,7 @@ button:disabled {
 }
 
 .topbar {
-  height: 68px;
+  min-height: 68px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -192,6 +192,8 @@ button:disabled {
 .upload-form {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -202,6 +204,9 @@ button:disabled {
 }
 
 .upload-form select,
+.upload-form input,
+.figure-page-actions select,
+.figure-page-actions input,
 .upload-form button,
 .figure-page-actions button,
 .button-link,
@@ -210,12 +215,24 @@ button:disabled {
   border-radius: 8px;
 }
 
-.upload-form select {
+.upload-form select,
+.figure-page-actions select,
+.model-input {
   min-width: 168px;
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--ink);
   padding: 0 10px;
+}
+
+.model-input {
+  width: 122px;
+  min-width: 118px;
+  font-size: 13px;
+}
+
+.effort-select {
+  min-width: 112px;
 }
 
 .api-key-input {

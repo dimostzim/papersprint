@@ -58,6 +58,8 @@ class ChatRequest(BaseModel):
     use_web: bool = False
     provider: str | None = None
     api_key: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
     citation_context: dict[str, Any] | None = None
     figure_context: list[dict[str, Any]] | None = None
 
@@ -65,12 +67,16 @@ class ChatRequest(BaseModel):
 class FigureAnalysisRequest(BaseModel):
     provider: str | None = None
     api_key: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
     force: bool = False
 
 
 class AnalysisRequest(BaseModel):
     provider: str | None = "auto"
     api_key: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class SelectionExplainRequest(BaseModel):
@@ -79,6 +85,8 @@ class SelectionExplainRequest(BaseModel):
     page_text: str = ""
     provider: str | None = None
     api_key: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class HighlightsUpdateRequest(BaseModel):
@@ -387,10 +395,12 @@ def build_paper_record(
     provider: str | None,
     digest: str,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     extracted = extract_pdf(pdf_path)
     citations = ground_citation_rects(pdf_path, extract_citations(extracted))
-    analysis = analyze_paper(pdf_path, extracted, provider, api_key)
+    analysis = analyze_paper(pdf_path, extracted, provider, api_key, model, reasoning_effort)
     return {
         "id": paper_id,
         "filename": filename,
@@ -476,9 +486,11 @@ def finish_paper_analysis(
     provider: str | None,
     digest: str,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> None:
     try:
-        paper = build_paper_record(pdf_path, paper_id, filename, provider, digest, api_key)
+        paper = build_paper_record(pdf_path, paper_id, filename, provider, digest, api_key, model, reasoning_effort)
     except Exception as error:
         pending = PAPERS.get(paper_id)
         if pending:
@@ -604,6 +616,8 @@ async def analyze_uploaded_paper(paper_id: str, request: AnalysisRequest):
             provider,
             paper.get("digest", ""),
             request.api_key,
+            request.model,
+            request.reasoning_effort,
         )
     )
     return public_paper(paper, include_details=True)
@@ -689,6 +703,8 @@ async def analyze_paper_figures(paper_id: str, request: FigureAnalysisRequest):
             FIGURES_DIR,
             request.provider,
             request.api_key,
+            request.model,
+            request.reasoning_effort,
         )
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -753,6 +769,8 @@ async def chat_with_paper(paper_id: str, request: ChatRequest):
             request.citation_context,
             request.api_key,
             request.figure_context,
+            request.model,
+            request.reasoning_effort,
         )
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
@@ -776,6 +794,8 @@ async def explain_selection(paper_id: str, request: SelectionExplainRequest):
             request.page_text,
             request.provider,
             request.api_key,
+            request.model,
+            request.reasoning_effort,
         )
     except Exception as error:
         raise HTTPException(status_code=502, detail=str(error)) from error

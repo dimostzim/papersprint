@@ -24,6 +24,7 @@ const DEFAULT_HIGHLIGHT_COLORS = {
 const PDF_ZOOM_MIN = 0.6;
 const PDF_ZOOM_MAX = 2.4;
 const PDF_ZOOM_STEP = 0.1;
+const MODEL_SETTINGS_KEY = "papersprint.modelSettings";
 
 const state = {
   papers: [],
@@ -48,6 +49,10 @@ const els = {
   uploadForm: document.getElementById("upload-form"),
   pdfInput: document.getElementById("pdf-input"),
   providerSelect: document.getElementById("provider-select"),
+  textModelInput: document.getElementById("text-model-input"),
+  textEffortSelect: document.getElementById("text-effort-select"),
+  visionModelInput: document.getElementById("vision-model-input"),
+  visionEffortSelect: document.getElementById("vision-effort-select"),
   apiKeyInput: document.getElementById("api-key-input"),
   analyzeButton: document.getElementById("analyze-button"),
   figuresButton: document.getElementById("figures-button"),
@@ -376,10 +381,63 @@ async function requestJson(url, options = {}) {
   return payload;
 }
 
+function storedModelSettings() {
+  try {
+    return JSON.parse(window.localStorage.getItem(MODEL_SETTINGS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveModelSettings() {
+  const settings = {
+    textModel: selectedTextModel(),
+    textEffort: selectedTextEffort(),
+    visionModel: selectedVisionModel(),
+    visionEffort: selectedVisionEffort(),
+  };
+  window.localStorage.setItem(MODEL_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function populateEffortSelect(select, efforts, selected, prefix) {
+  if (!select) {
+    return;
+  }
+  setHtml(
+    select,
+    efforts.map((effort) => {
+      const isSelected = effort === selected ? " selected" : "";
+      return `<option value="${escapeHtml(effort)}"${isSelected}>${escapeHtml(prefix)}: ${escapeHtml(effort)}</option>`;
+    }).join(""),
+  );
+}
+
+function setModelOptions(settings) {
+  const stored = storedModelSettings();
+  const efforts = settings.reasoning_efforts?.length
+    ? settings.reasoning_efforts
+    : ["none", "low", "medium", "high", "xhigh"];
+  const textEffort = stored.textEffort || settings.default_reasoning_effort || "high";
+  const visionEffort = stored.visionEffort || settings.default_vision_reasoning_effort || textEffort;
+  if (els.textModelInput) {
+    els.textModelInput.value = stored.textModel || settings.default_text_model || "gpt-5.5";
+    els.textModelInput.placeholder = "Text model";
+    els.textModelInput.title = "Text model";
+  }
+  if (els.visionModelInput) {
+    els.visionModelInput.value = stored.visionModel || settings.default_vision_model || selectedTextModel();
+    els.visionModelInput.placeholder = "Vision model";
+    els.visionModelInput.title = "Vision model";
+  }
+  populateEffortSelect(els.textEffortSelect, efforts, textEffort, "Text");
+  populateEffortSelect(els.visionEffortSelect, efforts, visionEffort, "Vision");
+}
+
 function setProviderOptions(settings) {
   if (settings.default_provider && els.providerSelect) {
     els.providerSelect.value = settings.default_provider;
   }
+  setModelOptions(settings);
   const parts = [];
   parts.push(settings.codex_available ? "Codex ready" : "Codex unavailable");
   parts.push(settings.openai_available ? "OpenAI key set" : "No API key");
@@ -401,6 +459,36 @@ function selectedProvider() {
 
 function requestApiKey() {
   return selectedProvider() === "openai" ? els.apiKeyInput?.value.trim() || "" : "";
+}
+
+function selectedTextModel() {
+  return els.textModelInput?.value.trim() || state.settings?.default_text_model || "gpt-5.5";
+}
+
+function selectedVisionModel() {
+  return els.visionModelInput?.value.trim() || state.settings?.default_vision_model || selectedTextModel();
+}
+
+function selectedTextEffort() {
+  return els.textEffortSelect?.value || state.settings?.default_reasoning_effort || "high";
+}
+
+function selectedVisionEffort() {
+  return els.visionEffortSelect?.value || state.settings?.default_vision_reasoning_effort || selectedTextEffort();
+}
+
+function textModelRequestOptions() {
+  return {
+    model: selectedTextModel(),
+    reasoning_effort: selectedTextEffort(),
+  };
+}
+
+function visionModelRequestOptions() {
+  return {
+    model: selectedVisionModel(),
+    reasoning_effort: selectedVisionEffort(),
+  };
 }
 
 function syncApiKeyInput() {
@@ -1264,6 +1352,7 @@ async function startSelectedPaperAnalysis(event) {
     body: JSON.stringify({
       provider: selectedProvider(),
       api_key: requestApiKey() || null,
+      ...textModelRequestOptions(),
     }),
   });
   setSelectedPaper(paper);
@@ -2016,6 +2105,7 @@ async function explainSelection(selection, beforeRequest) {
       page_text: selection.pageText,
       provider: selectedProvider(),
       api_key: requestApiKey() || null,
+      ...textModelRequestOptions(),
     }),
   });
 
@@ -2091,6 +2181,7 @@ async function sendChatMessage(content, forceWeb = false, citationContext = null
       provider: selectedProvider(),
       api_key: requestApiKey() || null,
       citation_context: citationContext,
+      ...textModelRequestOptions(),
     }),
   });
 
@@ -2128,6 +2219,14 @@ els.pdfInput?.addEventListener("change", () => {
 });
 
 els.providerSelect?.addEventListener("change", syncApiKeyInput);
+[
+  els.textModelInput,
+  els.textEffortSelect,
+  els.visionModelInput,
+  els.visionEffortSelect,
+].forEach((control) => {
+  control?.addEventListener("change", saveModelSettings);
+});
 
 els.pdfViewer?.addEventListener("pointerdown", startTextSelection);
 window.addEventListener("pointermove", updateTextSelection);

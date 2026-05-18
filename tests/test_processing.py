@@ -4,6 +4,7 @@ import fitz
 import pytest
 
 from app.ai import (
+    DEFAULT_MODEL,
     MAX_ANALYSIS_HIGHLIGHTS,
     analyze_page_figures,
     build_analysis_prompt,
@@ -17,6 +18,9 @@ from app.ai import (
     normalize_analysis,
     normalize_highlight_snippet,
     parse_json_payload,
+    provider_status,
+    resolve_reasoning_effort,
+    resolve_text_model,
     sanitize_prompt_text,
     select_relevant_excerpts,
 )
@@ -300,6 +304,31 @@ def test_choose_provider_uses_request_api_key_for_auto(monkeypatch):
     assert choose_provider("auto", "sk-test") == "openai"
 
 
+def test_provider_status_exposes_model_defaults(monkeypatch):
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("CODEX_REASONING_EFFORT", raising=False)
+
+    status = provider_status()
+
+    assert status["default_text_model"] == DEFAULT_MODEL
+    assert status["default_vision_model"] == DEFAULT_MODEL
+    assert status["default_reasoning_effort"] == "high"
+    assert status["reasoning_efforts"] == ["none", "low", "medium", "high", "xhigh"]
+
+
+def test_model_and_effort_resolution_prefers_request_then_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "medium")
+
+    assert resolve_text_model("gpt-5.5") == "gpt-5.5"
+    assert resolve_text_model(None) == "gpt-5.4"
+    assert resolve_reasoning_effort("xhigh", "OPENAI_REASONING_EFFORT") == "xhigh"
+    assert resolve_reasoning_effort(None, "OPENAI_REASONING_EFFORT") == "medium"
+    assert resolve_reasoning_effort("bad", "OPENAI_REASONING_EFFORT") == "medium"
+
+
 def test_choose_vision_provider_prefers_codex_for_auto(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("AI_PROVIDER", "openai")
@@ -335,7 +364,7 @@ def test_analyze_page_figures_uses_codex_vision(monkeypatch, tmp_path):
     image_path = tmp_path / "page.jpg"
     image_path.write_bytes(b"jpeg")
     monkeypatch.setattr("app.ai.shutil.which", lambda command: "/usr/local/bin/codex" if command == "codex" else None)
-    monkeypatch.setattr("app.ai.run_codex_vision", lambda prompt, image_path: '{"figures": []}')
+    monkeypatch.setattr("app.ai.run_codex_vision", lambda prompt, image_path, model=None, reasoning_effort=None: '{"figures": []}')
 
     payload = analyze_page_figures(1, "Figure 1 shows the main result.", image_path, "codex")
 

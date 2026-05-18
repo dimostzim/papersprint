@@ -720,7 +720,17 @@ def test_chat_passes_figure_context(monkeypatch):
     }
     captured = {}
 
-    def fake_answer_chat(paper, messages, web_results, provider, citation_context=None, api_key=None, figure_context=None):
+    def fake_answer_chat(
+        paper,
+        messages,
+        web_results,
+        provider,
+        citation_context=None,
+        api_key=None,
+        figure_context=None,
+        model=None,
+        reasoning_effort=None,
+    ):
         captured["figure_context"] = figure_context
         return {"answer": "ok", "provider_used": "test", "web_results": [], "warnings": []}
 

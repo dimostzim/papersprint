@@ -215,6 +215,8 @@ def analyze_figures(
     figures_dir: Path,
     provider: str | None,
     api_key: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     paper_dir = figure_directory(figures_dir, paper_id)
     paper_dir.mkdir(parents=True, exist_ok=True)
@@ -244,7 +246,15 @@ def analyze_figures(
         page_number = int(page["page_number"])
         page_image = paper_dir / f"page-{page_number}.jpg"
         render_page_image(pdf_path, page_number, page_image)
-        payload = analyze_page_figures(page_number, str(page.get("text", "")), page_image, provider, api_key)
+        payload = analyze_page_figures(
+            page_number,
+            str(page.get("text", "")),
+            page_image,
+            provider,
+            api_key,
+            model,
+            reasoning_effort,
+        )
         provider_used = str(payload.get("provider_used", provider_used))
 
         for page_index, figure in enumerate(normalize_figure_items(payload, page_number), start=1):

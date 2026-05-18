@@ -101,7 +101,7 @@ def test_analyze_figures_only_calls_vision_for_candidate_pages(tmp_path, monkeyp
     )
     calls = []
 
-    def fake_analyze_page(page_number, page_text, image_path, provider, api_key=None):
+    def fake_analyze_page(page_number, page_text, image_path, provider, api_key=None, model=None, reasoning_effort=None):
         calls.append(page_number)
         return {"provider_used": "test", "figures": []}
 

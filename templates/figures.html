@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Figures - PaperSprint</title>
-    <link rel="stylesheet" href="/static/styles.css?v=41" />
+    <link rel="stylesheet" href="/static/styles.css?v=47" />
   </head>
   <body class="figures-body" data-paper-id="{{ paper_id }}">
     <header class="topbar">
@@ -17,6 +17,24 @@
       </div>
 
       <div class="figure-page-actions">
+        <select id="provider-select" aria-label="AI provider">
+          <option value="auto">Auto</option>
+          <option value="codex">Codex subscription</option>
+          <option value="openai">OpenAI API key</option>
+        </select>
+        <input
+          id="api-key-input"
+          class="api-key-input hidden"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="OpenAI API key"
+          aria-label="OpenAI API key"
+        />
+        <input id="text-model-input" class="model-input" type="text" aria-label="Text model" spellcheck="false" />
+        <select id="text-effort-select" class="effort-select" aria-label="Text reasoning effort"></select>
+        <input id="vision-model-input" class="model-input" type="text" aria-label="Vision model" spellcheck="false" />
+        <select id="vision-effort-select" class="effort-select" aria-label="Vision reasoning effort"></select>
         <a class="button-link" href="/">Reader</a>
         <button id="reanalyze-figures-button" class="loading-button" type="button" disabled>
           <span class="button-spinner" aria-hidden="true"></span>
@@ -59,6 +77,6 @@
 
     <div id="toast" class="toast hidden"></div>
     <script type="module" src="/static/theme.js?v=14"></script>
-    <script type="module" src="/static/figures.js?v=17"></script>
+    <script type="module" src="/static/figures.js?v=18"></script>
   </body>
 </html>
