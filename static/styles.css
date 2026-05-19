@@ -20,7 +20,7 @@
   --reader-bg: #ecefeb;
   --reader-grid-line: rgba(0, 0, 0, 0.035);
   --pdf-page-bg: #ffffff;
-  --highlight-outline: rgba(0, 0, 0, 0.04);
+  --highlight-outline: rgba(0, 0, 0, 0.16);
   --selection-bg: rgba(23, 107, 135, 0.26);
   --citation-bg: rgba(23, 107, 135, 0.14);
   --citation-outline: rgba(23, 107, 135, 0.2);
@@ -74,7 +74,7 @@ html[data-theme="dark"] {
   --topbar-bg: rgba(29, 33, 31, 0.92);
   --reader-bg: #101211;
   --reader-grid-line: rgba(255, 255, 255, 0.05);
-  --highlight-outline: rgba(255, 255, 255, 0.08);
+  --highlight-outline: rgba(255, 255, 255, 0.22);
   --selection-bg: rgba(95, 181, 199, 0.32);
   --citation-bg: rgba(95, 181, 199, 0.16);
   --citation-outline: rgba(95, 181, 199, 0.28);
@@ -1096,7 +1096,7 @@ h2 {
   position: absolute;
   z-index: 2;
   border-radius: 3px;
-  opacity: 0.22;
+  opacity: 0.34;
   outline: 1px solid var(--highlight-outline);
   pointer-events: auto;
   cursor: pointer;
@@ -1104,62 +1104,62 @@ h2 {
 
 .highlight-rect:hover,
 .highlight-rect.hover {
-  opacity: 0.46;
+  opacity: 0.58;
 }
 
 .highlight-rect.active {
-  opacity: 0.58;
+  opacity: 0.72;
   outline: 2px solid var(--accent);
 }
 
 .highlight-rect.label-goal,
 .highlight-rect.label-problem {
-  background: #72c9e8;
+  background: #0097c7;
 }
 
 .highlight-rect.label-solution {
-  background: #4fb07a;
+  background: #1f9d61;
 }
 
 .highlight-rect.label-method {
-  background: #8ed6a8;
+  background: #55b96f;
 }
 
 .highlight-rect.label-benchmarking {
-  background: #6fb4e8;
+  background: #2f86d1;
 }
 
 .highlight-rect.label-novelty {
-  background: #b8a8ea;
+  background: #9472e6;
 }
 
 .highlight-rect.label-result {
-  background: #ffd36d;
+  background: #e7ad00;
 }
 
 .highlight-rect.label-ablation {
-  background: #caa66a;
+  background: #b47a22;
 }
 
 .highlight-rect.label-hyperparams,
 .highlight-rect.label-compute {
-  background: #8fa0a8;
+  background: #6f838c;
 }
 
 .highlight-rect.label-tradeoff {
-  background: #f0a36f;
+  background: #df6b1f;
 }
 
 .highlight-rect.label-limitation {
-  background: #e99797;
+  background: #d85252;
 }
 
 .highlight-rect.label-failure {
-  background: #d86969;
+  background: #c53232;
 }
 
 .highlight-rect.label-important {
-  background: #b6bec3;
+  background: #7f8990;
 }
 
 .figure-rect {

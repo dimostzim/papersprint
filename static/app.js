@@ -26,19 +26,19 @@ const HIGHLIGHT_FACETS = [
 ];
 
 const DEFAULT_HIGHLIGHT_COLORS = {
-  goal: "#72c9e8",
-  problem: "#72c9e8",
-  solution: "#4fb07a",
-  method: "#8ed6a8",
-  novelty: "#b8a8ea",
-  benchmarking: "#6fb4e8",
-  result: "#ffd36d",
-  ablation: "#caa66a",
-  hyperparams: "#8fa0a8",
-  tradeoff: "#f0a36f",
-  limitation: "#e99797",
-  failure: "#d86969",
-  important: "#b6bec3",
+  goal: "#0097c7",
+  problem: "#0097c7",
+  solution: "#1f9d61",
+  method: "#55b96f",
+  novelty: "#9472e6",
+  benchmarking: "#2f86d1",
+  result: "#e7ad00",
+  ablation: "#b47a22",
+  hyperparams: "#6f838c",
+  tradeoff: "#df6b1f",
+  limitation: "#d85252",
+  failure: "#c53232",
+  important: "#7f8990",
 };
 
 const HIGHLIGHT_LABEL_ALIASES = {
@@ -216,7 +216,7 @@ function customHighlightStyle(highlight) {
   if (!color || !safeHexColor(highlight?.color)) {
     return "";
   }
-  return ` style="background: ${hexToRgba(color, 0.24)}; color: var(--ink);"`;
+  return ` style="background: ${hexToRgba(color, 0.32)}; color: var(--ink);"`;
 }
 
 function facetChipStyle(facet) {
@@ -224,7 +224,7 @@ function facetChipStyle(facet) {
   if (!color) {
     return "";
   }
-  return ` style="--facet-color: ${color}; --facet-bg: ${hexToRgba(color, 0.26)};"`;
+  return ` style="--facet-color: ${color}; --facet-bg: ${hexToRgba(color, 0.34)};"`;
 }
 
 function showToast(message, sticky = false) {

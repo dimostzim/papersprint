@@ -398,6 +398,9 @@ def clean_highlight_record(highlight: dict[str, Any]) -> dict[str, Any] | None:
         "page_number": page_number,
         "rects": rects,
     }
+    highlight_id = " ".join(str(highlight.get("id", "")).split()).strip()
+    if highlight_id:
+        clean["id"] = highlight_id[:80]
     comment = " ".join(str(highlight.get("comment", "")).split()).strip()
     if comment:
         clean["comment"] = comment[:700]

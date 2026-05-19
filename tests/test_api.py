@@ -820,6 +820,7 @@ def test_update_highlights_persists_to_cache(tmp_path, monkeypatch):
         json={
             "highlights": [
                 {
+                    "id": "h-manual",
                     "label": "Custom Finding",
                     "snippet": "This manually selected sentence should stay highlighted.",
                     "reason": "manual",
@@ -835,10 +836,12 @@ def test_update_highlights_persists_to_cache(tmp_path, monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["highlight_count"] == 1
+    assert payload["highlights"][0]["id"] == "h-manual"
     assert payload["highlights"][0]["label"] == "custom finding"
     assert payload["highlights"][0]["color"] == "#bb66cc"
     assert payload["highlights"][0]["comment"] == "This explains why the selected sentence matters."
     cached_record = json.loads((cache_records_dir / "digest-1.json").read_text(encoding="utf-8"))
+    assert cached_record["highlights"][0]["id"] == "h-manual"
     assert cached_record["highlights"][0]["snippet"] == "This manually selected sentence should stay highlighted."
     assert cached_record["highlights"][0]["color"] == "#bb66cc"
     assert cached_record["highlights"][0]["comment"] == "This explains why the selected sentence matters."

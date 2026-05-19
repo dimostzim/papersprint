@@ -104,6 +104,7 @@ def test_ground_highlights_preserves_comments(tmp_path):
 
     highlights = [
         {
+            "id": "h-solution",
             "label": "solution",
             "snippet": sentence,
             "reason": "Shows the decision rule.",
@@ -113,6 +114,7 @@ def test_ground_highlights_preserves_comments(tmp_path):
 
     grounded = ground_highlights(pdf_path, highlights, [])
 
+    assert grounded[0]["id"] == "h-solution"
     assert grounded[0]["comment"] == "The method chooses caution over forced assignment."
     assert grounded[0]["rects"]
 
@@ -155,6 +157,9 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Not-shown items should prevent common over-reading" in prompt
     assert "Reviewer questions should be specific requests" in prompt
     assert "do not optimize for the absolute minimum" in prompt
+    assert "top-to-bottom in page order" in prompt
+    assert "[Abstract orientation excerpt]" in prompt
+    assert "deliberate weighting aid" in prompt
     assert "Use the problem label for the task" in prompt
     assert "Use the solution label for the paper's proposed" in prompt
     assert "Use the novelty label for contribution claims" in prompt
@@ -169,9 +174,10 @@ def test_build_analysis_prompt_asks_for_complete_guided_highlights():
     assert "Takeaway supporting_excerpt should usually be broader than a single highlight" in prompt
     assert '"comment": "short plain-language explanation' in prompt
     assert "Every returned highlight must include a non-empty comment" in prompt
-    assert "Abstract highlights are allowed" in prompt
+    assert "Abstract highlights are encouraged" in prompt
     assert "include it; otherwise prefer the more specific body sentence" in prompt
     assert "Do not cluster the set in the opening motivation" in prompt
+    assert 'This is an issue because' in prompt
     assert "[Page 2]" in prompt
     assert "Paper text:" in prompt
     assert "Return exactly" not in prompt
@@ -218,6 +224,10 @@ def test_format_guided_reading_text_keeps_abstract_and_removes_references():
 
     text = format_guided_reading_text(extracted)
 
+    assert text.startswith(
+        "[Abstract orientation excerpt]\n"
+        "Background Abstract-only motivation. Methods Abstract-only method. Results Abstract-only result."
+    )
     assert "Abstract-only motivation" in text
     assert "[Page 1]\nTitle Authors Abstract Background Abstract-only motivation." in text
     assert "1 Introduction Body contribution starts here." in text

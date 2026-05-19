@@ -22,7 +22,8 @@ MAX_ANALYSIS_HIGHLIGHTS = 40
 MAX_HIGHLIGHT_SNIPPET_CHARS = 900
 MAX_TAKEAWAY_EXCERPT_CHARS = 1600
 MAX_CITATION_VALIDATION_CONTEXTS = 180
-ANALYSIS_VERSION = 13
+ABSTRACT_EXCERPT_CHARS = 3500
+ANALYSIS_VERSION = 14
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_EFFORT = "high"
 REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
@@ -57,6 +58,11 @@ OPENROUTER_MODEL_OPTIONS = [
     "google/gemini-3-pro",
 ]
 MODEL_OPTIONS = list(dict.fromkeys([*CODEX_MODEL_OPTIONS, *OPENAI_MODEL_OPTIONS, *OPENROUTER_MODEL_OPTIONS]))
+ABSTRACT_START_RE = re.compile(r"(?:^|\n)\s*abstract\b\s*[:.\-]?\s*", re.IGNORECASE)
+ABSTRACT_END_RE = re.compile(
+    r"(?:^|\n)\s*(?:keywords?|index terms?|1\.?\s+introduction|i\.\s+introduction|introduction)\b",
+    re.IGNORECASE,
+)
 REFERENCES_START_RE = re.compile(r"(?:^|\n)\s*(?:references|bibliography|works cited)\s*(?:\n|$)", re.IGNORECASE)
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -318,8 +324,8 @@ def format_analysis_text(extracted: ExtractedPaper) -> str:
         return sanitize_prompt_text(extracted.full_text)
 
     parts = []
-    for page in extracted.pages:
-        page_number = int(page.get("page_number", len(parts) + 1))
+    for index, page in enumerate(extracted.pages, start=1):
+        page_number = int(page.get("page_number", index))
         text = sanitize_prompt_text(str(page.get("text", ""))).strip()
         if text:
             parts.append(f"[Page {page_number}]\n{text}")
@@ -331,8 +337,12 @@ def format_guided_reading_text(extracted: ExtractedPaper) -> str:
         return sanitize_prompt_text(extracted.full_text)
 
     parts = []
-    for page in extracted.pages:
-        page_number = int(page.get("page_number", len(parts) + 1))
+    abstract_excerpt = extract_abstract_excerpt(extracted)
+    if abstract_excerpt:
+        parts.append(f"[Abstract orientation excerpt]\n{abstract_excerpt}")
+
+    for index, page in enumerate(extracted.pages, start=1):
+        page_number = int(page.get("page_number", index))
         text = sanitize_prompt_text(str(page.get("text", ""))).strip()
         text, found_references = without_reference_section(text)
         text = normalize_text(text)
@@ -342,6 +352,22 @@ def format_guided_reading_text(extracted: ExtractedPaper) -> str:
             break
 
     return "\n\n".join(parts) or format_analysis_text(extracted)
+
+
+def extract_abstract_excerpt(extracted: ExtractedPaper) -> str:
+    for page in extracted.pages[:2]:
+        text = sanitize_prompt_text(str(page.get("text", ""))).strip()
+        match = ABSTRACT_START_RE.search(text)
+        if not match:
+            continue
+
+        abstract = text[match.end() :]
+        end_match = ABSTRACT_END_RE.search(abstract)
+        if end_match:
+            abstract = abstract[: end_match.start()]
+        return normalize_text(abstract)[:ABSTRACT_EXCERPT_CHARS].strip()
+
+    return ""
 
 
 def without_reference_section(text: str) -> tuple[str, bool]:

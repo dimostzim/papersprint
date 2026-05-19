@@ -40,9 +40,11 @@ Highlight requirements:
 - Code availability should use only paper text. Say when release or usability is unclear.
 - Reviewer questions should be specific requests a reviewer would ask the authors to clarify, test, release, or bound.
 - Return enough highlights for a reader to follow the paper's argument without reading every section; do not optimize for the absolute minimum.
+- The UI sorts highlights by their physical location in the PDF. Select highlights so that reading them top-to-bottom in page order gives a coherent, sufficient big-picture walkthrough of the paper.
+- When the paper text includes an [Abstract orientation excerpt], treat it as a deliberate weighting aid for the paper's problem, answer, novelty, and main result. Use it to decide which body highlights are necessary, and include abstract sentences when they are the clearest compact statement of the big picture. Do not include the bracketed header in any excerpt.
 - Treat highlight labels as a vocabulary, not a checklist. Use only labels that have explicit useful evidence in this paper. Do not add computational-paper-specific labels such as benchmarking, hyperparams, ablation, or failure when the paper does not actually contain those details.
 - Add a highlight only if it changes the reader's understanding of the problem, solution, novelty, method, evidence, tradeoff, failure mode, or claim limitation.
-- Abstract highlights are allowed when they provide useful orientation, especially for problem, solution, novelty, and main result.
+- Abstract highlights are encouraged when they provide useful orientation, especially for problem, solution, novelty, and main result.
 - Do not stop after abstract-level summary. Include concrete body passages for the contribution, mechanism, evaluation, reproducibility details, and limits when they exist.
 - If an abstract sentence is the clearest compact statement of the paper's contribution or result, include it; otherwise prefer the more specific body sentence.
 - Do not highlight title, author, affiliation, contact, availability, license, preprint, or header/footer text.
@@ -64,6 +66,8 @@ Highlight requirements:
 - Highlights must be complete sentence-level excerpts. Most useful highlights are single sentences; use a compact multi-sentence excerpt only when the claim needs immediate context.
 - Avoid adjacent highlights unless they serve different labels.
 - Spread highlights across introduction, methods/system, evaluation/results, and limitations/discussion when those sections exist.
+- Later limitation, tradeoff, or failure highlights must not assume unstated context. If a later comment would say "This is an issue because..." or rely on "this/it/that" without a clear noun, rewrite the comment so it names the paper-specific problem, method, dataset, or claim directly.
+- Before finalizing, read only the returned highlights in top-to-bottom paper order. If that sequence would not explain the paper's problem, proposed answer, key evidence, and claim ceiling, replace redundant excerpts or add the missing contextual highlight.
 - Prefer passages that define the task, name the paper's motivating failure mode, introduce this paper's intervention, explain the mechanism, define the evaluation/baseline/metric, report the main result, state a tradeoff, give reproducibility details, or bound this paper's claim.
 - Avoid generic field-motivation sentences unless they create a concrete methodological decision.
 - Read-this-first items should help a researcher triage the paper: task, method, evidence, limitations, and claim ceiling.

@@ -275,7 +275,7 @@ def find_exact_rects(
 
 def ground_highlights(
     pdf_path: Path,
-    highlights: list[dict[str, str]],
+    highlights: list[dict[str, Any]],
     sentence_spans: list[SentenceSpan],
 ) -> list[dict[str, Any]]:
     grounded: list[dict[str, Any]] = []
@@ -299,16 +299,18 @@ def ground_highlights(
             page_number = best_span.page_number
             rects = best_span.rects
 
-        grounded.append(
-            {
-                "label": sanitize_label(item.get("label", "important")),
-                "snippet": snippet,
-                "reason": normalize_text(item.get("reason", "")),
-                "comment": normalize_text(item.get("comment", "")),
-                "page_number": page_number,
-                "rects": rects,
-            }
-        )
+        grounded_item = {
+            "label": sanitize_label(item.get("label", "important")),
+            "snippet": snippet,
+            "reason": normalize_text(item.get("reason", "")),
+            "comment": normalize_text(item.get("comment", "")),
+            "page_number": page_number,
+            "rects": rects,
+        }
+        highlight_id = normalize_text(str(item.get("id", "")))[:80]
+        if highlight_id:
+            grounded_item["id"] = highlight_id
+        grounded.append(grounded_item)
 
     return sort_highlights(grounded)
 
